@@ -4,7 +4,6 @@
 #include "state.h"
 #include "daly.h"
 #include "sim.h"
-#include "prov.h"
 #include <WiFi.h>
 
 static String buf;
@@ -35,7 +34,6 @@ static void printStatus() {
     BmsState s = stateSnapshot();
     Serial.println("--- сеть ---");
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
-    Serial.printf("  имя BLE: %s\n", provDeviceName().c_str());
     Serial.println("--- батарея ---");
     if (simEnabled()) Serial.println("  ВНИМАНИЕ: показаны демо-данные (sim on)");
     Serial.printf("  связь: %s%s\n", s.linked ? "есть" : "нет",

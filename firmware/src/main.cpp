@@ -1,7 +1,7 @@
 // Модуль мониторинга батареи: DALY BMS по BLE → веб-интерфейс в локальной сети.
 //
 // Ядро 0: BLE-центральный (опрос батареи)
-// Ядро 1: Wi-Fi, веб-сервер, BLE-периферийный (настройка сети), CLI, демо-данные
+// Ядро 1: Wi-Fi, веб-сервер, терминал, демо-данные
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
@@ -11,7 +11,6 @@
 #include "net.h"
 #include "web.h"
 #include "daly.h"
-#include "prov.h"
 #include "cli.h"
 #include "sim.h"
 #include "button.h"
@@ -35,14 +34,13 @@ void setup() {
 
     String name = deviceName();
 
-    // NimBLE поднимаем один раз здесь: и центральный, и периферийный работают
-    // поверх общего стека.
+    // NimBLE работает только центральным: настройка сети идёт через точку
+    // доступа, поэтому рекламировать себя модулю незачем.
     NimBLEDevice::init(name.c_str());
     NimBLEDevice::setPower(9);   // дБм
 
     netStart();
     webStart();
-    provStart(name);
     simStart();
     dalyStart();
 
@@ -54,7 +52,6 @@ void setup() {
 void loop() {
     webLoop();
     netLoop();
-    provLoop();
     cliLoop();
     buttonLoop();
     evWatchLoop();
