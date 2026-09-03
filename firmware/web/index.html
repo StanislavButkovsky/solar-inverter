@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Батарея</title>
+
+<!-- Ярлык на главном экране и запуск без адресной строки.
+     iOS смотрит apple-* мета и apple-touch-icon, Android — манифест. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Батарея">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#10131a">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="manifest" href="/manifest.json">
+<style>
+* { box-sizing: border-box; -webkit-box-sizing: border-box; }
+body {
+  margin: 0;
+  /* В полноэкранном режиме сверху нет адресной строки, зато есть вырез и
+     статусная полоса. env() старые браузеры просто не поймут и возьмут 12px. */
+  padding: 12px 10px 24px;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  background: #10131a; color: #eef1f6;
+  font: 15px/1.4 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+}
+a { color: #4c9aff; text-decoration: none; }
+
+/* ------------------------------------------------ плашки */
+.chip { display: inline-block; padding: 4px 11px; border-radius: 20px;
+        font-size: 12px; font-weight: 600; vertical-align: middle; margin-left: 10px; }
+.chip.gray  { background: #262c38; color: #9aa4b6; }
+.chip.green { background: #123a24; color: #43d17f; }
+.chip.amber { background: #3d2f12; color: #f0a83c; }
+.chip.red   { background: #3d1c17; color: #ff6d55; }
+.chip.blue  { background: #14294a; color: #6cb0ff; }
+
+/* ------------------------------------------------ раскладка */
+.row { font-size: 0; margin: 0 -5px; }
+.col { display: inline-block; vertical-align: top; padding: 5px; font-size: 15px; }
+.c1  { width: 100%; }
+.c2  { width: 50%; }
+.c3  { width: 33.33%; }
+.c4  { width: 50%; }
+@media (min-width: 620px) { .c4 { width: 25%; } }
+
+.card { background: #191d26; border: 1px solid #262c38; border-radius: 12px; padding: 14px 16px; }
+.card h2 { margin: 0 0 12px; font-size: 12px; font-weight: 600; letter-spacing: .06em;
+           text-transform: uppercase; color: #8a93a5; }
+
+/* ------------------------------------------------ главный блок заряда */
+.hero { text-align: center; padding: 20px 16px 18px; }
+.hero .big { font-size: 72px; line-height: 1; font-weight: 300; letter-spacing: -.02em; }
+.hero .big span { font-size: 28px; font-weight: 400; color: #8a93a5; }
+.hero .cap { color: #8a93a5; font-size: 13px; margin-top: 10px; }
+.track { height: 16px; background: #232a36; border-radius: 8px; overflow: hidden; margin-top: 16px; }
+.track i { display: block; height: 100%; width: 0; border-radius: 8px;
+           -webkit-transition: width .5s; transition: width .5s; }
+
+/* ------------------------------------------------ плитки */
+.tile .k { color: #8a93a5; font-size: 11px; letter-spacing: .05em;
+           text-transform: uppercase; margin-bottom: 6px; }
+.tile .v { font-size: 30px; font-weight: 600; line-height: 1.1; }
+/* Узкий экран: три плитки в ряд по 138 px, крупный кегль в них не влезает. */
+@media (max-width: 479px) {
+  .tile .v { font-size: 22px; }
+  .tile .v span { font-size: 13px; }
+  .card { padding: 12px 11px; }
+  .hero .big { font-size: 64px; }
+}
+.tile .v span { font-size: 15px; font-weight: 400; color: #8a93a5; }
+
+/* ------------------------------------------------ ячейки */
+.cellbox { font-size: 0; margin: 0 -3px; }
+/* Пять ячеек в ряд: на 414 px книжной ориентации (iPhone 6 Plus) четырнадцать
+   ячеек укладываются в три ряда, а не в четыре — экран короткий, каждый ряд дорог. */
+.cell { display: inline-block; width: 20%; padding: 3px; vertical-align: top; font-size: 15px; }
+@media (min-width: 480px) { .cell { width: 14.28%; } }
+@media (min-width: 760px) { .cell { width: 12.5%; } }
+.cell div.in { background: #222836; border: 1px solid #222836;
+               border-radius: 8px; padding: 7px 6px; text-align: center; }
+.cell.hi div.in { border-color: #f0a83c; }
+.cell.lo div.in { border-color: #4c9aff; }
+.cell.bal div.in { background: #2e2a17; }
+.cell .n  { color: #7d8698; font-size: 11px; }
+.cell .mv { font-size: 17px; font-weight: 600; }
+.cell .cb { height: 3px; background: #333c4c; border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.cell .cb i { display: block; height: 100%; width: 0; background: #4c9aff; }
+
+/* ------------------------------------------------ таблицы и формы */
+table.kv { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.kv td { padding: 7px 0; border-bottom: 1px solid #232a36; vertical-align: top; }
+table.kv td:last-child { text-align: right; }
+table.kv tr:last-child td { border-bottom: 0; }
+
+button { background: #29303e; color: #eef1f6; border: 1px solid #3a4354;
+         border-radius: 9px; padding: 10px 15px; font-size: 14px; cursor: pointer; }
+button:active { background: #333c4c; }
+button[disabled] { opacity: .5; }
+button.wide { display: block; width: 100%; }
+button.accent { background: #1d4ed8; border-color: #2a5ce0; }
+input { background: #222836; border: 1px solid #3a4354; border-radius: 9px;
+        color: #eef1f6; padding: 11px 12px; font-size: 16px; width: 100%; }
+label { display: block; color: #8a93a5; font-size: 12px; margin: 12px 0 5px; }
+
+/* Индикатор уровня: четыре палочки. Без SVG и без flex — просто inline-block,
+   чтобы отрисовался и на старом планшете. */
+.bars { display: inline-block; vertical-align: middle; margin-right: 7px;
+        height: 16px; line-height: 16px; white-space: nowrap; }
+.bars i { display: inline-block; width: 4px; margin-right: 2px; background: #333c4c;
+          border-radius: 1px; vertical-align: bottom; }
+.bars i.b1 { height: 5px; }
+.bars i.b2 { height: 9px; }
+.bars i.b3 { height: 13px; }
+.bars i.b4 { height: 17px; }
+
+/* ------------------------------------------------ схема потоков мощности
+   SVG здесь уместен: целевое устройство — iPhone 6 Plus на iOS 12, Safari 12
+   рисует и SVG, и CSS-анимации без оговорок. */
+.flowbox { width: 100%; height: auto; display: block; }
+.fl { fill: none; stroke: #2f3a4a; stroke-width: 3; stroke-linecap: round; }
+.fl.on { stroke-dasharray: 7 6; -webkit-animation: dash 1.1s linear infinite;
+         animation: dash 1.1s linear infinite; }
+.fl.rev { -webkit-animation-direction: reverse; animation-direction: reverse; }
+@-webkit-keyframes dash { to { stroke-dashoffset: -13; } }
+@keyframes dash { to { stroke-dashoffset: -13; } }
+.nd { fill: #222836; stroke: #2f3a4a; stroke-width: 1; }
+.nl { fill: #8a93a5; font-size: 11px; }
+.nv { fill: #eef1f6; font-size: 15px; font-weight: 600; }
+.nvd { fill: #5f6879; }
+body.light .fl { stroke: #d5dbe6; }
+body.light .nd { fill: #f4f6fa; stroke: #e3e8f0; }
+body.light .nl { fill: #667085; }
+body.light .nv { fill: #171b22; }
+body.light .nvd { fill: #aab2c0; }
+
+/* журнал: метка уровня точкой, время справа */
+.ev { padding: 7px 0; border-bottom: 1px solid #232a36; font-size: 14px; }
+.ev:last-child { border-bottom: 0; }
+.ev b { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        margin-right: 8px; vertical-align: middle; }
+.ev .tm { float: right; color: #8a93a5; font-size: 12px; padding-left: 8px; }
+body.light .ev { border-color: #e7ebf2; }
+body.light .ev .tm { color: #667085; }
+
+.sub { color: #8a93a5; font-size: 12px; }
+.stale { opacity: .4; }
+.hidden { display: none; }
+.note { background: #2e2a17; border: 1px solid #5c5228; border-radius: 12px;
+        padding: 12px 16px; margin-bottom: 14px; }
+.alarm { background: #331a16; border-color: #6d2f27; }
+.foot { color: #5f6879; font-size: 11px; text-align: center; margin-top: 20px; }
+
+/* ---------------------------------------------- светлая тема
+   Без CSS-переменных: их нет в старом WebKit. Просто перекрываем цвета
+   правилами с классом .light на теге body. */
+body.light { background: #eef1f6; color: #171b22; }
+body.light .card { background: #ffffff; border-color: #dde3ec; }
+body.light .card h2 { color: #667085; }
+body.light .sub { color: #667085; }
+body.light .tile .k { color: #667085; }
+body.light .tile .v span { color: #667085; }
+body.light .hero .big span { color: #667085; }
+body.light .hero .cap { color: #667085; }
+body.light .track { background: #e3e8f0; }
+body.light .cell div.in { background: #f4f6fa; border-color: #f4f6fa; }
+body.light .cell.hi div.in { border-color: #d9930f; }
+body.light .cell.lo div.in { border-color: #2f6fd0; }
+body.light .cell.bal div.in { background: #fbf3d8; }
+body.light .cell .n { color: #7a8494; }
+body.light .cell .cb { background: #dfe4ee; }
+body.light table.kv td { border-color: #e7ebf2; }
+body.light button { background: #f3f5fa; border-color: #cdd5e2; color: #171b22; }
+body.light button:active { background: #e6eaf2; }
+body.light button.accent { background: #1d4ed8; border-color: #1d4ed8; color: #ffffff; }
+body.light input { background: #ffffff; border-color: #cdd5e2; color: #171b22; }
+body.light label { color: #667085; }
+body.light .bars i { background: #d5dbe6; }
+body.light .note { background: #fff6dd; border-color: #ecd28c; }
+body.light .alarm { background: #fdeae5; border-color: #f0b3a4; }
+body.light .foot { color: #99a2b2; }
+body.light .chip.gray  { background: #e7eaf1; color: #55607a; }
+body.light .chip.green { background: #d8f5e4; color: #0f7440; }
+body.light .chip.amber { background: #fdf0d4; color: #8a5a06; }
+body.light .chip.red   { background: #fde1dc; color: #a32c17; }
+body.light .chip.blue  { background: #dce9ff; color: #14479e; }
+</style>
+</head>
+<body>
+
+<!-- ============================ ДАШБОРД ============================ -->
+<div id="dash">
+
+  <div id="body">
+    <div class="row">
+      <div class="col c1"><div class="card">
+        <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span></h2>
+
+        <svg class="flowbox" viewBox="0 0 320 232" preserveAspectRatio="xMidYMid meet">
+          <!-- линии рисуются первыми, чтобы уходить под блоки -->
+          <line id="f_pv"   class="fl" x1="96"  y1="40"  x2="126" y2="98"  stroke="#f0a83c"/>
+          <line id="f_grid" class="fl" x1="96"  y1="192" x2="126" y2="134" stroke="#6cb0ff"/>
+          <line id="f_load" class="fl" x1="194" y1="98"  x2="224" y2="40"  stroke="#8b7cf6"/>
+          <line id="f_batt" class="fl" x1="194" y1="134" x2="224" y2="192" stroke="#2ecc71"/>
+
+          <rect class="nd" x="8"   y="14"  width="88" height="52" rx="10"/>
+          <text class="nl" x="52"  y="34"  text-anchor="middle">Солнце</text>
+          <text class="nv" x="52"  y="54"  text-anchor="middle" id="n_pv">—</text>
+
+          <rect class="nd" x="8"   y="166" width="88" height="52" rx="10"/>
+          <text class="nl" x="52"  y="186" text-anchor="middle">Сеть</text>
+          <text class="nv" x="52"  y="206" text-anchor="middle" id="n_grid">—</text>
+
+          <rect class="nd" x="120" y="92"  width="80" height="48" rx="10"/>
+          <text class="nl" x="160" y="111" text-anchor="middle">Инвертор</text>
+          <text class="nv" x="160" y="130" text-anchor="middle" id="n_inv">—</text>
+
+          <rect class="nd" x="224" y="14"  width="88" height="52" rx="10"/>
+          <text class="nl" x="268" y="34"  text-anchor="middle">Нагрузка</text>
+          <text class="nv" x="268" y="54"  text-anchor="middle" id="n_load">—</text>
+
+          <rect class="nd" x="224" y="166" width="88" height="52" rx="10"/>
+          <text class="nl" x="268" y="186" text-anchor="middle">Батарея</text>
+          <text class="nv" x="268" y="206" text-anchor="middle" id="n_batt">—</text>
+        </svg>
+
+        <table class="kv" style="margin-top:6px">
+          <tr><td>Питающая сеть</td><td id="i_grid">—</td></tr>
+          <tr><td>Выход</td><td id="i_out">—</td></tr>
+          <tr><td>Нагрузка</td><td id="i_load">—</td></tr>
+          <tr><td>Солнечные панели</td><td id="i_pv">—</td></tr>
+          <tr><td>Температура</td><td id="i_temp">—</td></tr>
+          <tr><td>Приоритет выхода</td><td id="i_po">—</td></tr>
+          <tr><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
+        </table>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="col c1"><div class="card hero">
+        <div class="big"><b id="soc">—</b><span> %</span></div>
+        <div class="track"><i id="socbar"></i></div>
+        <div class="cap" id="soccap">заряд батареи</div>
+        <div style="margin-top:12px">
+          <span class="chip gray" id="link" style="margin:0">нет связи</span>
+          <span class="chip amber hidden" id="demo">демо-данные</span>
+        </div>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="col c3"><div class="card tile">
+        <div class="k">Напряжение</div><div class="v"><span id="volt">—</span><span> В</span></div>
+      </div></div>
+      <div class="col c3"><div class="card tile">
+        <div class="k">Ток</div><div class="v" id="curv"><span id="cur">—</span><span> А</span></div>
+      </div></div>
+      <div class="col c3"><div class="card tile">
+        <div class="k">Мощность</div><div class="v" id="powv"><span id="pow">—</span><span id="powunit"> Вт</span></div>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="col c1"><div class="card">
+        <h2>Ячейки <span id="cellinfo" style="text-transform:none;letter-spacing:0;color:#8a93a5"></span></h2>
+        <div class="cellbox" id="cells"></div>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="col c4"><div class="card tile">
+        <div class="k">Температура</div><div class="v"><span id="tmax">—</span><span> °C</span></div>
+      </div></div>
+      <div class="col c4"><div class="card tile">
+        <div class="k">Разброс</div><div class="v"><span id="spread">—</span><span> мВ</span></div>
+      </div></div>
+      <div class="col c4"><div class="card tile">
+        <div class="k">Запас энергии</div><div class="v"><span id="remain">—</span><span> кВт·ч</span></div>
+      </div></div>
+      <div class="col c4"><div class="card tile">
+        <div class="k">Защита BMS</div><div class="v" style="font-size:18px;padding-top:6px" id="mos">—</div>
+      </div></div>
+    </div>
+
+    <div class="row hidden" id="faultrow">
+      <div class="col c1"><div class="card alarm">
+        <h2>Флаги аварий</h2>
+        <div id="faults" style="font-size:18px;font-weight:600"></div>
+        <div class="sub" style="margin-top:8px">
+          Расшифровка битов сверяется с официальным приложением, пока показываем как есть.
+        </div>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="col c1"><div class="card">
+        <h2>Журнал событий</h2>
+        <div id="log"><div class="sub">пусто</div></div>
+      </div></div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div class="col c1"><button class="wide" onclick="showSettings()">Настройки</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ НАСТРОЙКИ ============================ -->
+<div id="settings" class="hidden">
+
+  <div class="row" style="margin-top:12px">
+    <div class="col c1"><button onclick="showDash()">← К показаниям</button></div>
+  </div>
+
+  <div class="row hidden" id="saved"><div class="col c1"></div></div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
+      <h2>Сеть</h2>
+      <table class="kv">
+        <tr><td>Состояние</td><td id="s_wifi">—</td></tr>
+        <tr><td>Адрес</td><td id="s_ip">—</td></tr>
+      </table>
+      <div style="margin-top:14px">
+        <button class="wide" onclick="wifiScan()" id="wscanbtn">Найти доступные сети</button>
+      </div>
+      <div id="nets" style="margin-top:10px"></div>
+      <label>Имя сети (только 2,4 ГГц)</label>
+      <input id="ssid" autocapitalize="off" autocorrect="off" autocomplete="off">
+      <label>Пароль</label>
+      <input id="pass" type="password" autocomplete="off">
+      <div style="margin-top:16px">
+        <button class="wide accent" onclick="saveCfg()">Сохранить и перезагрузить</button>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
+      <h2>Батарея</h2>
+      <div class="sub" style="margin-bottom:12px">
+        Показывает всё, что модуль слышит в эфире. Так проверяется, добивает ли Bluetooth
+        до батареи с места установки: <b>−80 дБм и выше — рабочий уровень, слабее −90
+        связь будет рваться.</b>
+      </div>
+      <button class="wide" onclick="bleScan()" id="scanbtn">Искать батарею, 5 секунд</button>
+      <div id="found" style="margin-top:10px"></div>
+      <div style="margin-top:16px">
+        <button class="wide" onclick="release()">Отпустить батарею приложению на 10 минут</button>
+        <div class="sub" id="rel" style="margin-top:8px">
+          Донгл DALY держит одно соединение. Пока его занимает модуль,
+          официальное приложение к батарее не подключится.
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c2"><div class="card">
+      <h2>Канал связи</h2>
+      <table class="kv">
+        <tr><td>Устройство</td><td id="s_mac">—</td></tr>
+        <tr><td>Уровень сигнала</td><td id="s_rssi">—</td></tr>
+        <tr><td>Кадров принято</td><td id="s_ok">—</td></tr>
+        <tr><td>Кадров с ошибкой</td><td id="s_bad">—</td></tr>
+        <tr><td>Разрывов</td><td id="s_disc">—</td></tr>
+        <tr><td>Возраст данных</td><td id="s_age">—</td></tr>
+      </table>
+    </div></div>
+    <div class="col c2"><div class="card">
+      <h2>Демонстрация</h2>
+      <div class="sub">
+        Рисует правдоподобную сборку 14S NMC, чтобы показать интерфейс без батареи.
+        Настройка живёт в памяти и переживает перезагрузку.
+      </div>
+      <div style="margin-top:14px">
+        <button class="wide" onclick="simToggle()" id="simbtn">—</button>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
+      <h2>Оформление</h2>
+      <div class="sub" style="margin-bottom:12px">
+        Выбор хранится в самом браузере, поэтому у планшета на стене и у телефона
+        он может быть разным.
+      </div>
+      <button id="th_dark"  onclick="setTheme('dark')">Тёмная</button>
+      <button id="th_light" onclick="setTheme('light')">Светлая</button>
+      <button id="th_clock" onclick="setTheme('clock')">По часам</button>
+      <button id="th_auto"  onclick="setTheme('auto')">Как в системе</button>
+      <div class="sub" style="margin-top:10px">
+        «По часам» — светлая с 8:00 до 20:00, тёмная ночью. Время берётся у самого
+        браузера, поэтому модуль на него не влияет и переключение работает даже
+        без связи с ним.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
+      <h2>Ярлык на главном экране</h2>
+      <div class="sub" style="line-height:1.7">
+        Страницу можно поставить на главный экран как обычное приложение — откроется
+        на весь экран, без адресной строки и вкладок. Планшету на стене это и нужно.<br><br>
+        <b>iPhone и iPad, Safari:</b> кнопка «Поделиться» внизу → «На экран „Домой“» →
+        «Добавить». Открывать нужно именно в Safari: в Chrome на iOS полноэкранный
+        режим не работает.<br><br>
+        <b>Android, Chrome:</b> меню из трёх точек → «Добавить на главный экран».<br><br>
+        Ярлык ведёт на текущий адрес модуля. Если адрес сменится, ярлык придётся
+        создать заново — поэтому адрес лучше закрепить на роутере.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row" style="margin-top:10px">
+    <div class="col c1"><button class="wide" onclick="showDash()">← К показаниям</button></div>
+  </div>
+</div>
+
+<div class="foot">Обновление раз в секунду. Данные с DALY BMS по Bluetooth LE.</div>
+
+<script>
+function $(id) { return document.getElementById(id); }
+
+/* ------------------------------------------- тема оформления
+   Хранится у зрителя, а не в модуле: планшет на стене и телефон в кармане
+   стоят в разном свете, и одна настройка на всех была бы хуже. */
+var theme = "dark";
+
+function systemLight() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+}
+
+// Светлая с 8:00 до 20:00. Часы берём у браузера: на планшете они настроены,
+// а модуль может быть и без связи с NTP.
+var DAY_FROM = 8, DAY_TO = 20;
+function clockLight() {
+  var h = (new Date()).getHours();
+  return h >= DAY_FROM && h < DAY_TO;
+}
+
+var lastLight = null;
+
+function applyTheme() {
+  var light = (theme === "light") ||
+              (theme === "auto"  && systemLight()) ||
+              (theme === "clock" && clockLight());
+
+  // Трогаем DOM только когда решение изменилось: applyTheme зовётся раз в
+  // секунду, чтобы режим «по часам» переключался сам, без перезагрузки.
+  if (light !== lastLight) {
+    lastLight = light;
+    document.body.className = light ? "light" : "";
+  }
+
+  var ids = { dark: "th_dark", light: "th_light", clock: "th_clock", auto: "th_auto" };
+  for (var k in ids) {
+    var b = $(ids[k]);
+    if (!b) continue;
+    b.style.borderColor = (k === theme) ? "#1d4ed8" : "";
+    b.style.fontWeight  = (k === theme) ? "600" : "";
+  }
+}
+
+function setTheme(t) {
+  theme = t;
+  try { localStorage.setItem("theme", t); } catch (e) { }
+  applyTheme();
+}
+
+try {
+  var saved = localStorage.getItem("theme");
+  if (saved) theme = saved;
+} catch (e) { }
+function show(id, on) { $(id).className = $(id).className.replace(/ ?hidden/, "") + (on ? "" : " hidden"); }
+function fmt(x, n) { return (x === null || x === undefined) ? "—" : Number(x).toFixed(n); }
+function chip(id, cls, text) { $(id).className = "chip " + cls; $(id).innerHTML = text; }
+
+// Пока модуль сканирует эфир, он скачет по каналам, и HTTP-запрос с планшета
+// в этот момент запросто теряется. Поэтому у запроса есть путь неудачи:
+// без него опрос молча умирал и на экране навсегда оставалось «ищу сети…».
+// Уровень сигнала палочками. Пороги у Wi-Fi и Bluetooth разные: у BLE
+// передатчик слабее, и −80 дБм там ещё рабочий уровень, а у Wi-Fi уже плохой.
+function bars(rssi, ble) {
+  var n, col;
+  if (ble) n = rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : 1;
+  else     n = rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+  col = n >= 3 ? "#2ecc71" : (n === 2 ? "#f0a83c" : "#e5573f");
+  var h = '<span class="bars">';
+  for (var k = 1; k <= 4; k++)
+    h += '<i class="b' + k + '"' + (k <= n ? ' style="background:' + col + '"' : '') + '></i>';
+  return h + '</span>';
+}
+
+function get(url, cb, onFail) {
+  var r = new XMLHttpRequest(), done = false;
+  function fail() { if (done) return; done = true; if (onFail) onFail(); }
+  r.open("GET", url, true);
+  r.timeout = 4000;
+  r.onreadystatechange = function () {
+    if (r.readyState !== 4 || done) return;
+    if (r.status === 200) {
+      done = true;
+      try { cb(JSON.parse(r.responseText)); } catch (e) { }
+    } else fail();
+  };
+  r.ontimeout = fail;
+  r.onerror = fail;
+  r.send();
+}
+
+/* ----------------------------------------- переключение экранов */
+var onSettings = false;
+function showSettings() { onSettings = true;  paint(); }
+function showDash()     { onSettings = false; paint(); }
+function paint() {
+  show("dash", !onSettings); show("settings", onSettings);
+  window.scrollTo(0, 0);
+}
+
+/* ----------------------------------------- дашборд */
+var cellNodes = [];
+function buildCells(n) {
+  var box = $("cells");
+  box.innerHTML = "";
+  cellNodes = [];
+  for (var i = 0; i < n; i++) {
+    var d = document.createElement("div");
+    d.className = "cell";
+    d.innerHTML = '<div class="in"><div class="n">' + (i + 1) + '</div>' +
+                  '<div class="mv"><span>—</span></div>' +
+                  '<div class="cb"><i></i></div></div>';
+    box.appendChild(d);
+    cellNodes.push(d);
+  }
+}
+
+var INVNAME = ["нет связи", "ожидание", "работа от сети", "работа от батареи",
+               "обход", "авария"];
+var PRIO_OUT = ["сеть в приоритете", "солнце в приоритете", "солнце, батарея, сеть"];
+var PRIO_CHG = ["сеть и солнце", "солнце в приоритете", "только солнце"];
+
+function flow(id, on, rev) {
+  var e = $(id);
+  e.className.baseVal = "fl" + (on ? " on" : "") + (on && rev ? " rev" : "");
+}
+
+function w(x) { return Math.abs(x) >= 1000 ? (x / 1000).toFixed(2) + " кВт"
+                                           : x.toFixed(0) + " Вт"; }
+
+function renderInv(v, b) {
+  var live = v.linked && v.fresh;
+
+  // Солнце перекрывает потребление целиком — это отдельное состояние, а не
+  // режим инвертора: формально он всё ещё «от батареи», но энергия идёт
+  // от панелей, и батарея при этом заряжается. Отсюда свой цвет и своя подпись.
+  var solar = live && v.pvW > 20 && v.pvW >= v.outW;
+
+  if (!live)             chip("invmode", "gray",  "нет связи");
+  else if (v.mode === 5) chip("invmode", "red",   INVNAME[5]);
+  else if (solar)        chip("invmode", "blue",  "работа от солнца");
+  else if (v.mode === 3) chip("invmode", "amber", INVNAME[3]);
+  else                   chip("invmode", "green", INVNAME[v.mode] || INVNAME[0]);
+
+  // Потоки: линия живёт, только когда по ней реально идёт мощность.
+  var pvOn   = live && v.pvW > 20;
+  var gridOn = live && v.grid && (v.mode === 2 || v.mode === 4);
+  var loadOn = live && v.outW > 10;
+  var chg    = live && v.chgW > 20;
+  var dsg    = live && b.i < -1;
+
+  flow("f_pv",   pvOn,   false);
+  flow("f_grid", gridOn, false);
+  flow("f_load", loadOn, false);
+  flow("f_batt", chg || dsg, dsg);          // разряд — против направления
+  $("f_batt").setAttribute("stroke", dsg ? "#f0a83c" : "#2ecc71");
+
+  function nv(id, text, dim) {
+    var e = $(id);
+    e.textContent = text;
+    e.className.baseVal = dim ? "nv nvd" : "nv";
+  }
+  nv("n_pv",   live ? w(v.pvW) : "—", !pvOn);
+  nv("n_grid", live ? (v.grid ? v.gridV.toFixed(0) + " В" : "нет") : "—", !v.grid);
+  nv("n_load", live ? w(v.outW) : "—", !loadOn);
+  nv("n_batt", b.cellCount ? w(Math.abs(b.p)) : "—", !(chg || dsg));
+  nv("n_inv",  live ? (v.outV.toFixed(0) + " В") : "—", !live);
+
+  $("i_grid").innerHTML = live ? (v.grid ? v.gridV.toFixed(1) + " В · " + v.gridHz.toFixed(1) + " Гц"
+                                         : "отсутствует") : "—";
+  $("i_out").innerHTML  = live ? (v.outV.toFixed(1) + " В · " + v.outHz.toFixed(1) + " Гц") : "—";
+  $("i_load").innerHTML = live ? (w(v.outW) + " · " + v.loadPct + " %") : "—";
+  $("i_pv").innerHTML   = live ? (v.pvW > 20 ? v.pvV.toFixed(0) + " В · " + w(v.pvW) : "нет выработки") : "—";
+  $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
+  $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "?") : "—";
+  $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "?") : "—";
+}
+
+function render(s) {
+  var b = s.bms, l = s.link;
+  if (s.inv) renderInv(s.inv, b);
+
+  /* --- состояние связи, мелким под процентами --- */
+  if (l.released)      chip("link", "amber", "отпущено приложению, " + l.releaseLeft + " с");
+  else if (!l.linked)  chip("link", "red",   "нет связи");
+  else if (!l.fresh)   chip("link", "amber", "данные устарели");
+  else                 chip("link", "green", "связь есть");
+
+  $("body").className = l.fresh ? "" : "stale";
+  show("demo", !!s.sim);
+
+  /* --- заряд --- */
+  $("soc").innerHTML = fmt(b.soc, 1);
+  var pct = Math.max(0, Math.min(100, b.soc));
+  var col = b.soc < 20 ? "#e5573f" : (b.soc < 40 ? "#f0a83c" : "#2ecc71");
+  $("socbar").style.width = pct + "%";
+  $("socbar").style.background = col;
+  // Запас в киловатт-часах — это ампер-часы на текущее напряжение сборки.
+  // Оценка мгновенная: под нагрузкой напряжение просядет и цифра слегка уменьшится.
+  var kwh = b.remainAh * b.v / 1000;
+  $("soccap").innerHTML = b.cellCount
+      ? (b.cellCount + "S · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 1) + " А·ч")
+      : "батарея не подключена";
+  // на всякий случай: страница может открыться не с самого верха
+  if (!b.cellCount) $("socbar").style.width = "0%";
+
+  /* --- плитки --- */
+  // Знак и есть режим: плюс — в батарею, минус — из батареи.
+  // Отдельная плашка «заряд/разряд» это дублировала, поэтому её больше нет.
+  $("volt").innerHTML = fmt(b.v, 2);
+  $("cur").innerHTML  = (b.i > 0 ? "+" : "") + fmt(b.i, 1);
+  if (Math.abs(b.p) >= 1000) {
+    $("pow").innerHTML = (b.p > 0 ? "+" : "") + fmt(b.p / 1000, 2);
+    $("powunit").innerHTML = " кВт";
+  } else {
+    $("pow").innerHTML = (b.p > 0 ? "+" : "") + fmt(b.p, 0);
+    $("powunit").innerHTML = " Вт";
+  }
+  var dircol = b.state === 1 ? "#2ecc71" : (b.state === 2 ? "#f0a83c" : "#eef1f6");
+  $("curv").style.color = dircol;
+  $("powv").style.color = dircol;
+
+  $("tmax").innerHTML   = b.tMin === b.tMax ? b.tMax : (b.tMin + "…" + b.tMax);
+  $("spread").innerHTML = b.spread;
+  $("remain").innerHTML = fmt(kwh, 2);
+  $("mos").innerHTML =
+      '<span class="chip ' + (b.chgMos ? "green" : "red") + '" style="margin:0 6px 0 0">заряд</span>' +
+      '<span class="chip ' + (b.dsgMos ? "green" : "red") + '" style="margin:0">разряд</span>';
+
+  /* --- ячейки --- */
+  if (cellNodes.length !== b.cellCount) buildCells(b.cellCount);
+  $("cellinfo").innerHTML = b.cellCount
+      ? ("· мин " + b.minMv + " · макс " + b.maxMv + " мВ") : "";
+  for (var i = 0; i < cellNodes.length; i++) {
+    var mv = b.cells[i] || 0;
+    var cls = "cell";
+    if (b.cellCount > 1 && mv === b.maxMv) cls += " hi";
+    if (b.cellCount > 1 && mv === b.minMv) cls += " lo";
+    if (b.balance && b.balance[i]) cls += " bal";
+    cellNodes[i].className = cls;
+    cellNodes[i].getElementsByTagName("span")[0].innerHTML = mv;
+    var p = Math.max(0, Math.min(100, (mv - 3000) / 12));   /* 3000…4200 мВ, рабочий NMC */
+    cellNodes[i].getElementsByTagName("i")[0].style.width = p + "%";
+  }
+
+  /* --- аварии --- */
+  if (b.faults) { show("faultrow", true); $("faults").innerHTML = b.faults; }
+  else show("faultrow", false);
+
+  /* --- настройки --- */
+  $("s_wifi").innerHTML = s.wifi.status;
+  $("s_ip").innerHTML   = s.wifi.ip;
+  $("s_mac").innerHTML  = l.mac || "не привязана";
+  $("s_rssi").innerHTML = l.rssi ? (bars(l.rssi, true) + l.rssi + " дБм") : "—";
+  $("s_ok").innerHTML   = l.ok;
+  $("s_bad").innerHTML  = l.bad;
+  $("s_disc").innerHTML = l.disc;
+  $("s_age").innerHTML  = l.ageS === null ? "—" : (l.ageS + " с");
+  $("simbtn").innerHTML = s.sim ? "Выключить демо-режим" : "Включить демо-режим";
+  simOn = !!s.sim;
+}
+
+/* ----------------------------------------- действия */
+var simOn = false;
+function simToggle() { get("/api/sim?on=" + (simOn ? "0" : "1"), function () { setTimeout(tick, 300); }); }
+function release()   { get("/api/ble/release?min=10", function () { setTimeout(tick, 300); }); }
+
+var foundUntil = 0;
+function bleScan() {
+  $("scanbtn").disabled = true;
+  $("found").innerHTML = '<div class="sub">сканирую эфир…</div>';
+  foundUntil = (new Date()).getTime() + 25000;
+  busyRadio = true;
+  get("/api/ble/scan",
+      function () { setTimeout(pollFound, 1500); },
+      function () { setTimeout(pollFound, 1500); });
+}
+function pollFound() {
+  if ((new Date()).getTime() > foundUntil) {
+    busyRadio = false;
+    $("scanbtn").disabled = false;
+    $("found").innerHTML = '<div class="sub">модуль не ответил. Нажмите ещё раз</div>';
+    return;
+  }
+  get("/api/ble/found", function (r) {
+    if (r.busy) { setTimeout(pollFound, 1000); return; }
+    busyRadio = false;
+    $("scanbtn").disabled = false;
+    var d = r.devices || [];
+    if (!d.length) { $("found").innerHTML = '<div class="sub">ничего не найдено</div>'; return; }
+    d.sort(function (a, b) { return b.rssi - a.rssi; });
+    var h = '<table class="kv">';
+    for (var i = 0; i < d.length; i++) {
+      var x = d[i];
+      var mark  = x.daly ? ' <b style="color:#f0a83c">похоже на DALY</b>' : '';
+      var bound = (r.bound && r.bound.toLowerCase() === x.mac.toLowerCase())
+                  ? ' <b style="color:#2ecc71">привязана</b>' : '';
+      var btn = x.daly ? '<button onclick="bind(\'' + x.mac + '\')">привязать</button>' : '';
+      h += '<tr><td>' + (x.name || '(без имени)') +
+           '<br><span class="sub">' + x.mac + mark + bound + '</span></td>' +
+           '<td style="white-space:nowrap">' + bars(x.rssi, true) +
+           '<span class="sub">' + x.rssi + ' дБм</span><br>' + btn + '</td></tr>';
+    }
+    $("found").innerHTML = h + '</table>';
+  }, function () { setTimeout(pollFound, 1000); });
+}
+function bind(mac) {
+  get("/api/ble/bind?mac=" + encodeURIComponent(mac), function () {
+    $("found").innerHTML = '<div class="sub">привязано, подключаюсь…</div>';
+  });
+}
+
+var netsUntil = 0;
+function wifiScan() {
+  $("wscanbtn").disabled = true;
+  $("nets").innerHTML = '<div class="sub">ищу сети…</div>';
+  netsUntil = (new Date()).getTime() + 25000;
+  busyRadio = true;                       // не мешаем сканированию опросом состояния
+  get("/api/wifi/scan",
+      function () { setTimeout(pollNets, 1500); },
+      function () { setTimeout(pollNets, 1500); });   // ответ мог потеряться, но поиск идёт
+}
+function pollNets() {
+  if ((new Date()).getTime() > netsUntil) {
+    busyRadio = false;
+    $("wscanbtn").disabled = false;
+    $("nets").innerHTML = '<div class="sub">модуль не ответил. Нажмите ещё раз</div>';
+    return;
+  }
+  get("/api/wifi/found", function (r) {
+    if (r.busy) { setTimeout(pollNets, 1000); return; }
+    busyRadio = false;
+    $("wscanbtn").disabled = false;
+    var n = r.nets || [];
+    if (!n.length) {
+      $("nets").innerHTML = '<div class="sub">ничего не найдено. Модуль видит только 2,4 ГГц</div>';
+      return;
+    }
+    var h = '<table class="kv">';
+    for (var i = 0; i < n.length; i++) {
+      var x = n[i];
+      var safe = x.ssid.replace(/'/g, "\\'");
+      h += '<tr><td><a href="#" onclick="pickNet(\'' + safe + '\');return false">' + x.ssid + '</a>' +
+           (x.open ? ' <span class="sub">(открытая)</span>' : '') +
+           '</td><td style="white-space:nowrap">' + bars(x.rssi, false) +
+           '<span class="sub">' + x.rssi + ' дБм</span></td></tr>';
+    }
+    $("nets").innerHTML = h + '</table>';
+  }, function () { setTimeout(pollNets, 1000); });   // не достучались — пробуем снова
+}
+function pickNet(name) { $("ssid").value = name; $("pass").focus(); }
+
+function saveCfg() {
+  if (!$("ssid").value) { alert("Введите имя сети"); return; }
+  var name = $("ssid").value;
+  var u = "/api/config?ssid=" + encodeURIComponent(name) +
+          "&pass=" + encodeURIComponent($("pass").value);
+  get(u, function () {});
+  // Дальше модуль уедет в другую сеть и эта вкладка умрёт. Объясняем заранее,
+  // как найти его снова, потому что новый адрес выдаст чужой DHCP.
+  $("saved").getElementsByTagName("div")[0].innerHTML =
+    '<div class="card" style="border-color:#2a5ce0">' +
+    '<h2>Модуль перезагружается</h2>' +
+    '<p>Он подключится к сети <b>' + name + '</b> и получит новый адрес. ' +
+    'Эта вкладка больше не откроется — адрес был старый.</p>' +
+    '<p><b>Как узнать новый адрес, любым из способов:</b></p>' +
+    '<ol style="padding-left:20px;line-height:1.9">' +
+    '<li>Подключиться телефоном к сети <b>solar-setup</b> (пароль <b>12345678</b>) ' +
+    'и открыть <b>http://192.168.4.1</b> — там будет написан новый адрес. ' +
+    'Точка доступа специально держится <b>10 минут</b> после смены сети.</li>' +
+    '<li>Открыть <b>http://solar.local</b> — работает, если устройство понимает mDNS.</li>' +
+    '<li>Открыть Android-приложение: оно ходит по Bluetooth и показывает адрес ' +
+    'независимо от того, в какой сети модуль.</li>' +
+    '<li>Посмотреть список клиентов на роутере — модуль там под именем ' +
+    '<b>Solar-…</b>, MAC начинается на 20:9b:a9.</li>' +
+    '</ol>' +
+    '<p class="sub">Адрес удобно закрепить за модулем на роутере, чтобы он больше не менялся.</p>' +
+    '</div>';
+  show("saved", true);
+  window.scrollTo(0, 0);
+}
+
+var busyRadio = false;
+function tick() {
+  if (theme === "clock") applyTheme();
+  if (!busyRadio) get("/api/state", render);
+}
+
+var EVCOL = { alarm: "#e5573f", warn: "#f0a83c", good: "#2ecc71", info: "#667085" };
+
+function ago(sec) {
+  if (sec < 60)   return sec + " с назад";
+  if (sec < 3600) return Math.floor(sec / 60) + " мин назад";
+  if (sec < 86400) return Math.floor(sec / 3600) + " ч назад";
+  return Math.floor(sec / 86400) + " сут назад";
+}
+
+function events() {
+  if (busyRadio) return;
+  get("/api/events", function (list) {
+    if (!list.length) { $("log").innerHTML = '<div class="sub">пока ничего не случилось</div>'; return; }
+    var h = "";
+    for (var i = 0; i < list.length && i < 12; i++) {
+      var e = list[i];
+      // Время есть только после синхронизации с NTP; до неё честнее «сколько назад».
+      var when = e.when ? e.when : ago(e.ago);
+      h += '<div class="ev"><span class="tm">' + when + '</span>' +
+           '<b style="background:' + (EVCOL[e.level] || EVCOL.info) + '"></b>' +
+           e.text + (e.detail ? ' <span class="sub">' + e.detail + '</span>' : '') +
+           '</div>';
+    }
+    $("log").innerHTML = h;
+  });
+}
+applyTheme();
+paint();
+tick();
+events();
+setInterval(tick, 1000);
+setInterval(events, 5000);
+</script>
+</body>
+</html>

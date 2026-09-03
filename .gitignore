@@ -1,0 +1,20 @@
+# --- сборка PlatformIO ---
+firmware/.pio/
+
+# Генерируется скриптом scripts/gen_web.py из web/index.html при каждой сборке.
+# Источник правды — html, поэтому копия в репозитории только мешала бы.
+firmware/src/webui_gz.h
+
+# --- Android ---
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+android-app/.idea/
+
+# --- распакованная копия архива с моделью крепления ---
+iphone-6-wall-mount-model_files/
+
+# --- прочее ---
+.DS_Store
+*.swp
