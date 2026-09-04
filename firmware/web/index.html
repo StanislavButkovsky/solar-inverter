@@ -241,7 +241,7 @@ body.light .chip.blue  { background: #dce9ff; color: #14479e; }
           <text class="nv" x="268" y="54"  text-anchor="middle" id="n_load">—</text>
 
           <rect class="nd" x="224" y="166" width="88" height="52" rx="10"/>
-          <text class="nl" x="268" y="186" text-anchor="middle">Батарея</text>
+          <text class="nl" x="268" y="186" text-anchor="middle" id="n_battlbl">Батарея</text>
           <text class="nv" x="268" y="206" text-anchor="middle" id="n_batt">—</text>
         </svg>
 
@@ -604,15 +604,23 @@ function renderInv(v, b) {
   flow("f_batt", chg || dsg, dsg);          // разряд — против направления
   $("f_batt").setAttribute("stroke", dsg ? "#f0a83c" : "#2ecc71");
 
-  function nv(id, text, dim) {
+  function nv(id, text, dim, color) {
     var e = $(id);
     e.textContent = text;
     e.className.baseVal = dim ? "nv nvd" : "nv";
+    // Инлайновый стиль, а не атрибут fill: атрибут проигрывает правилу класса.
+    e.style.fill = (color && !dim) ? color : "";
   }
+
+  // Заряд и разряд подписаны словом, а не только направлением бегущей линии:
+  // на маленьком экране направление считывается не сразу, а слово — сразу.
+  $("n_battlbl").textContent = chg ? "Заряд" : (dsg ? "Разряд" : "Батарея");
+  $("n_battlbl").style.fill = chg ? "#2ecc71" : (dsg ? "#f0a83c" : "");
   nv("n_pv",   live ? w(v.pvW) : "—", !pvOn);
   nv("n_grid", live ? (v.grid ? w(v.gridW) : "нет") : "—", !gridOn);
   nv("n_load", live ? w(v.outW) : "—", !loadOn);
-  nv("n_batt", b.cellCount ? w(Math.abs(b.p)) : "—", !(chg || dsg));
+  nv("n_batt", b.cellCount ? w(Math.abs(b.p)) : "—", !(chg || dsg),
+     chg ? "#2ecc71" : (dsg ? "#f0a83c" : ""));
   nv("n_inv",  live ? (v.outV.toFixed(0) + " В") : "—", !live);
 
   $("i_grid").innerHTML = live ? (v.grid ? v.gridV.toFixed(1) + " В · " + v.gridHz.toFixed(1) + " Гц"
