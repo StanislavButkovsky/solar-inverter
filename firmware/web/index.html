@@ -344,11 +344,13 @@ body.light .chip.blue  { background: #dce9ff; color: #14479e; }
     <div class="col c1"><div class="card">
       <h2>Батарея</h2>
       <div class="sub" style="margin-bottom:12px">
-        Показывает всё, что модуль слышит в эфире. Так проверяется, добивает ли Bluetooth
-        до батареи с места установки: <b>−80 дБм и выше — рабочий уровень, слабее −90
-        связь будет рваться.</b>
+        Показывает всё, что модуль слышит в эфире, и предлагает привязать найденное
+        как батарею или как донгл инвертора. Заодно проверяется, добивает ли Bluetooth
+        с места установки: <b>−80 дБм и выше — рабочий уровень, слабее −90 связь
+        будет рваться.</b> И батарея, и донгл держат по одному соединению: пока
+        их занимает модуль, официальные приложения к ним не подключатся.
       </div>
-      <button class="wide" onclick="bleScan()" id="scanbtn">Искать батарею, 5 секунд</button>
+      <button class="wide" onclick="bleScan()" id="scanbtn">Искать устройства, 5 секунд</button>
       <div id="found" style="margin-top:10px"></div>
       <div style="margin-top:16px">
         <button class="wide" onclick="release()">Отпустить батарею приложению на 10 минут</button>
@@ -599,8 +601,9 @@ function renderInv(v, b) {
   $("i_load").innerHTML = live ? (w(v.outW) + " · " + v.loadPct + " %") : "—";
   $("i_pv").innerHTML   = live ? (v.pvW > 20 ? v.pvV.toFixed(0) + " В · " + w(v.pvW) : "нет выработки") : "—";
   $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
-  $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "?") : "—";
-  $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "?") : "—";
+  // В карте регистров этого донгла приоритетов нет — честнее прочерк, чем догадка.
+  $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "неизвестно") : "—";
+  $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "неизвестно") : "—";
 }
 
 function render(s) {
@@ -719,10 +722,15 @@ function pollFound() {
     var h = '<table class="kv">';
     for (var i = 0; i < d.length; i++) {
       var x = d[i];
-      var mark  = x.daly ? ' <b style="color:#f0a83c">похоже на DALY</b>' : '';
+      var mark = x.daly ? ' <b style="color:#f0a83c">похоже на DALY</b>'
+               : x.inv  ? ' <b style="color:#6cb0ff">похоже на донгл инвертора</b>' : '';
       var bound = (r.bound && r.bound.toLowerCase() === x.mac.toLowerCase())
-                  ? ' <b style="color:#2ecc71">привязана</b>' : '';
-      var btn = x.daly ? '<button onclick="bind(\'' + x.mac + '\')">привязать</button>' : '';
+                  ? ' <b style="color:#2ecc71">батарея</b>'
+                : (r.boundInv && r.boundInv.toLowerCase() === x.mac.toLowerCase())
+                  ? ' <b style="color:#2ecc71">инвертор</b>' : '';
+      var btn = '';
+      if (x.daly) btn += '<button onclick="bind(\'' + x.mac + '\',\'bms\')">батарея</button> ';
+      if (x.inv || !x.daly) btn += '<button onclick="bind(\'' + x.mac + '\',\'inv\')">инвертор</button>';
       h += '<tr><td>' + (x.name || '(без имени)') +
            '<br><span class="sub">' + x.mac + mark + bound + '</span></td>' +
            '<td style="white-space:nowrap">' + bars(x.rssi, true) +
@@ -731,8 +739,8 @@ function pollFound() {
     $("found").innerHTML = h + '</table>';
   }, function () { setTimeout(pollFound, 1000); });
 }
-function bind(mac) {
-  get("/api/ble/bind?mac=" + encodeURIComponent(mac), function () {
+function bind(mac, what) {
+  get("/api/ble/bind?what=" + what + "&mac=" + encodeURIComponent(mac), function () {
     $("found").innerHTML = '<div class="sub">привязано, подключаюсь…</div>';
   });
 }

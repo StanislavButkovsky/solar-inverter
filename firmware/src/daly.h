@@ -25,6 +25,7 @@ struct BleFound {
     String  name;
     int     rssi;
     bool    hasDalyService;
+    bool    hasEybond;      // рекламирует сервис донгла инвертора
 };
 
 void   dalyStart();                      // поднять задачу BLE на ядре 0

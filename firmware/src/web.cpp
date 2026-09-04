@@ -7,6 +7,7 @@
 #include "daly.h"
 #include "sim.h"
 #include "events.h"
+#include "inv.h"
 #include <WebServer.h>
 
 // Синхронный сервер, а не асинхронный: опрос раз в секунду он тянет с запасом,
@@ -196,14 +197,16 @@ void webStart() {
     server.on("/api/ble/found", HTTP_GET, []() {
         std::vector<BleFound> v = dalyScanResults();
         String j = "{\"busy\":" + String(dalyScanBusy() ? "true" : "false") +
-                   ",\"bound\":\"" + cfg().bmsMac + "\",\"devices\":[";
+                   ",\"bound\":\"" + cfg().bmsMac + "\"" +
+                   ",\"boundInv\":\"" + cfg().invMac + "\",\"devices\":[";
         for (size_t i = 0; i < v.size(); i++) {
             if (i) j += ",";
             String name = v[i].name;
             name.replace("\"", "'");
             j += "{\"mac\":\"" + v[i].mac + "\",\"name\":\"" + name +
                  "\",\"rssi\":" + String(v[i].rssi) +
-                 ",\"daly\":" + String(v[i].hasDalyService ? "true" : "false") + "}";
+                 ",\"daly\":" + String(v[i].hasDalyService ? "true" : "false") +
+                 ",\"inv\":" + String(invLooksLikeDongle(v[i].name, v[i].hasEybond) ? "true" : "false") + "}";
         }
         j += "]}";
         server.sendHeader("Cache-Control", "no-store");
@@ -211,7 +214,9 @@ void webStart() {
     });
 
     server.on("/api/ble/bind", HTTP_GET, []() {
-        dalyBind(server.hasArg("mac") ? server.arg("mac") : String(""));
+        String mac = server.hasArg("mac") ? server.arg("mac") : String("");
+        if (server.hasArg("what") && server.arg("what") == "inv") invBind(mac);
+        else                                                      dalyBind(mac);
         server.send(200, "application/json", "{\"ok\":true}");
     });
 

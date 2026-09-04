@@ -4,6 +4,7 @@
 #include "state.h"
 #include "daly.h"
 #include "sim.h"
+#include "inv.h"
 #include <WiFi.h>
 
 static String buf;
@@ -23,6 +24,7 @@ static void help() {
         "wifi status           состояние сети\n"
         "ble scan              поиск устройств BLE рядом\n"
         "ble mac <mac>         привязать батарею по адресу (пусто — искать самому)\n"
+        "inv mac <mac>         привязать донгл инвертора Eybond\n"
         "ble release <мин>     отпустить батарею официальному приложению\n"
         "sim on|off            демо-данные для показа интерфейса без батареи\n"
         "poll <мс>             пауза между запросами к BMS\n"
@@ -34,6 +36,19 @@ static void printStatus() {
     BmsState s = stateSnapshot();
     Serial.println("--- сеть ---");
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
+    InvState v = invSnapshot();
+    Serial.println("--- инвертор ---");
+    if (cfg().invMac.isEmpty()) Serial.println("  донгл не привязан (inv mac <адрес>)");
+    else {
+        Serial.printf("  связь: %s%s\n", v.linked ? "есть" : "нет",
+                      v.linked && !v.fresh ? " (данные устарели)" : "");
+        if (v.fresh) {
+            Serial.printf("  сеть %s, выход %.1f В / %.2f Гц, нагрузка %.0f Вт (%u%%)\n",
+                          v.gridOn ? "есть" : "НЕТ", v.outV, v.outHz, v.outW, v.loadPct);
+            Serial.printf("  панели %.0f В / %.0f Вт, заряд %.0f Вт, температура %d °C\n",
+                          v.pvV, v.pvW, v.chgW, v.tempC);
+        }
+    }
     Serial.println("--- батарея ---");
     if (simEnabled()) Serial.println("  ВНИМАНИЕ: показаны демо-данные (sim on)");
     Serial.printf("  связь: %s%s\n", s.linked ? "есть" : "нет",
@@ -101,6 +116,12 @@ static void exec(String line) {
                           v[i].name.length() ? v[i].name.c_str() : "(без имени)",
                           v[i].hasDalyService ? "<< похоже на DALY" : "");
         if (v.empty()) Serial.println("  пусто");
+        return;
+    }
+
+    if (line.startsWith("inv mac")) {
+        String m = line.substring(7); m.trim();
+        invBind(m);
         return;
     }
 

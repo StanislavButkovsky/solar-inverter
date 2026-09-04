@@ -2,6 +2,7 @@
 #include "state.h"
 #include "cfg.h"
 #include "events.h"
+#include "inv.h"
 #include <NimBLEDevice.h>
 
 static const NimBLEUUID SVC_UUID((uint16_t)0xFFF0);
@@ -215,6 +216,7 @@ std::vector<BleFound> dalyScan(uint8_t seconds) {
         f.name = String(d->getName().c_str());
         f.rssi = d->getRSSI();
         f.hasDalyService = looksLikeDaly(d);
+        f.hasEybond = d->isAdvertisingService(NimBLEUUID("53300000-0023-4bd4-bbd5-a6920e4c5653"));
         out.push_back(f);
     }
     scan->clearResults();
@@ -342,8 +344,13 @@ static void dalyTask(void*) {
     uint32_t lastTry = 0;
 
     s_scanMtx = xSemaphoreCreateMutex();
+    invStart();
 
     for (;;) {
+        // Инвертор обслуживается из этой же задачи: все обращения к стеку BLE
+        // идут из одного контекста, и два соединения не мешают друг другу.
+        invTick();
+
         // Поиск по запросу из веба — раньше всего остального: им ищут батарею,
         // когда связи ещё нет.
         if (s_scanReq) {
