@@ -86,6 +86,7 @@ struct InvState {
     bool     gridOn       = false;   // есть питающая сеть
     float    gridV        = 0;
     float    gridHz       = 0;
+    float    gridW         = 0;       // мощность, забираемая из сети
 
     float    outV         = 0;
     float    outHz        = 0;

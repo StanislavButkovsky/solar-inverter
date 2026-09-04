@@ -60,6 +60,7 @@ static void parseBlock(uint16_t start, const uint8_t* d, uint8_t words) {
             uint16_t mode = R(201);
             v.gridV   = R(202) * 0.1f;
             v.gridHz  = R(203) * 0.01f;
+            v.gridW   = R(204) * 1.0f;
             v.outV    = R(206) * 0.1f;
             v.outHz   = R(208) * 0.01f;
             v.outW    = R(209) * 1.0f;      // регистр хранит ватты в единицах 0.001 кВт

@@ -90,6 +90,7 @@ static String jsonState() {
     j += ",\"grid\":"   + String(v.gridOn ? "true" : "false");
     j += ",\"gridV\":"  + String(v.gridV, 1);
     j += ",\"gridHz\":" + String(v.gridHz, 1);
+    j += ",\"gridW\":"  + String(v.gridW, 0);
     j += ",\"outV\":"   + String(v.outV, 1);
     j += ",\"outHz\":"  + String(v.outHz, 1);
     j += ",\"outW\":"   + String(v.outW, 0);

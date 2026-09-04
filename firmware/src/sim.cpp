@@ -100,6 +100,9 @@ static void simInv(uint32_t t, float battCur, float soc) {
         v.gridOn = gridOn;
         v.gridV  = gridOn ? 231.0f + 3.0f * sinf(phase / 7.0f) : 0.0f;
         v.gridHz = gridOn ? 50.0f : 0.0f;
+        // Из сети берётся то, чего не покрыло солнце: нагрузка плюс заряд минус выработка.
+        float deficit = loadW + (battCur > 0 ? battCur * 55.0f : 0.0f) - pvW;
+        v.gridW = (gridOn && deficit > 0) ? deficit : 0.0f;
 
         v.pvV = pvW > 50 ? 320.0f + 40.0f * sun : 0.0f;
         v.pvW = pvW;

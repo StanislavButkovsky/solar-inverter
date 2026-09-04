@@ -39,6 +39,14 @@ a { color: #4c9aff; text-decoration: none; }
 .chip.amber { background: #3d2f12; color: #f0a83c; }
 .chip.red   { background: #3d1c17; color: #ff6d55; }
 .chip.blue  { background: #14294a; color: #6cb0ff; }
+/* Инвертированный вид: не подсветка на фоне, а сплошная заливка. Пропадание
+   сети — единственное, ради чего стоит кричать со страницы. */
+.chip.solidred { background: #e5573f; color: #fff; font-weight: 700;
+                 -webkit-animation: pulse 1.6s ease-in-out infinite;
+                 animation: pulse 1.6s ease-in-out infinite; }
+@-webkit-keyframes pulse { 50% { opacity: .55; } }
+@keyframes pulse { 50% { opacity: .55; } }
+body.light .chip.solidred { background: #e5573f; color: #fff; }
 
 /* ------------------------------------------------ раскладка */
 .row { font-size: 0; margin: 0 -5px; }
@@ -205,7 +213,9 @@ body.light .chip.blue  { background: #dce9ff; color: #14479e; }
   <div id="body">
     <div class="row">
       <div class="col c1"><div class="card">
-        <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span></h2>
+        <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span>
+            <span id="gridchip" class="chip gray" style="float:right;margin:0">сеть —</span>
+            <span style="clear:both;display:block"></span></h2>
 
         <svg class="flowbox" viewBox="0 0 320 232" preserveAspectRatio="xMidYMid meet">
           <!-- линии рисуются первыми, чтобы уходить под блоки -->
@@ -584,6 +594,10 @@ function renderInv(v, b) {
   var chg    = live && v.chgW > 20;
   var dsg    = live && b.i < -1;
 
+  if (!live)        chip("gridchip", "gray", "сеть —");
+  else if (!v.grid) chip("gridchip", "solidred", "СЕТИ НЕТ");
+  else              chip("gridchip", "green", "сеть есть");
+
   flow("f_pv",   pvOn,   false);
   flow("f_grid", gridOn, false);
   flow("f_load", loadOn, false);
@@ -596,7 +610,7 @@ function renderInv(v, b) {
     e.className.baseVal = dim ? "nv nvd" : "nv";
   }
   nv("n_pv",   live ? w(v.pvW) : "—", !pvOn);
-  nv("n_grid", live ? (v.grid ? v.gridV.toFixed(0) + " В" : "нет") : "—", !v.grid);
+  nv("n_grid", live ? (v.grid ? w(v.gridW) : "нет") : "—", !gridOn);
   nv("n_load", live ? w(v.outW) : "—", !loadOn);
   nv("n_batt", b.cellCount ? w(Math.abs(b.p)) : "—", !(chg || dsg));
   nv("n_inv",  live ? (v.outV.toFixed(0) + " В") : "—", !live);
