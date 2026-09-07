@@ -26,6 +26,7 @@
 |---|---|
 | [DOCS.md](DOCS.md) | документация и принципы: что строим, почему так, куда идёт |
 | [BLE-SNIFF.md](BLE-SNIFF.md) | разведка: что инвертор говорит по Bluetooth |
+| [HIDEN-HS35.md](HIDEN-HS35.md) | вторая версия под инвертор Hiden Control HS35-5648PRO |
 | [PLAN.md](PLAN.md) | план решения: схемы подключения, варианты компоновки, этапы, риски |
 | [firmware/README.md](firmware/README.md) | прошивка: сборка, настройка, протокол DALY |
 
