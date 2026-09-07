@@ -33,6 +33,18 @@ static bool     s_apForced    = false;  // поднята кнопкой — с�
 
 // Время нужно журналу: без него события читаются как «столько-то секунд назад»,
 // а это бесполезно уже через сутки. Часовой пояс — MSK, менять здесь.
+// Расшифровка состояния Wi-Fi словами: коды никто не помнит наизусть.
+static const char* wifiWhy() {
+    switch (WiFi.status()) {
+    case WL_NO_SSID_AVAIL:  return "сеть с таким именем не найдена";
+    case WL_CONNECT_FAILED: return "не подошёл пароль либо роутер отказал";
+    case WL_CONNECTION_LOST:return "связь оборвалась";
+    case WL_DISCONNECTED:   return "не дошло до подключения — обычно неверный пароль";
+    case WL_IDLE_STATUS:    return "радио не начало подключение";
+    default:                return "причина неизвестна";
+    }
+}
+
 static void startNtp() {
     static bool done = false;
     if (done) return;
@@ -111,7 +123,9 @@ void netStart() {
         return;
     }
 
-    Serial.println("[net] подключиться не удалось");
+    // Без причины отказ выглядит одинаково, а причины разные: нет такой сети,
+    // не подошёл пароль, роутер отказал. Один раз это уже стоило вечера.
+    Serial.printf("[net] подключиться не удалось: %s\n", wifiWhy());
     raiseAp(true);                 // AP для настройки + STA продолжает пытаться
     s_lastRetry = millis();
     WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
@@ -155,6 +169,7 @@ void netLoop() {
 
     if (millis() - s_lastRetry > RETRY_MS) {
         s_lastRetry = millis();
+        Serial.printf("[net] повтор подключения (%s)\n", wifiWhy());
         if (!s_apUp) {
             // Работали клиентом и потеряли сеть. Поднимаем точку доступа, иначе
             // при смене пароля на роутере до модуля будет не достучаться.
