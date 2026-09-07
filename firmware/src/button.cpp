@@ -10,17 +10,28 @@ static bool     s_down      = false;
 static uint32_t s_changedAt = 0;
 static uint32_t s_downAt    = 0;
 
+static void led(bool on) {
+#if defined(LED_ADDRESSABLE)
+    // Адресный светодиод: свой протокол, зато можно цветом. Белый — «горит».
+    neopixelWrite(PIN_LED, on ? 40 : 0, on ? 40 : 0, on ? 40 : 0);
+#else
+    digitalWrite(PIN_LED, on ? HIGH : LOW);
+#endif
+}
+
 static void blink(uint8_t times, uint16_t ms) {
     for (uint8_t i = 0; i < times; i++) {
-        digitalWrite(PIN_LED, HIGH); delay(ms);
-        digitalWrite(PIN_LED, LOW);  delay(ms);
+        led(true);  delay(ms);
+        led(false); delay(ms);
     }
 }
 
 void buttonInit() {
     pinMode(PIN_BUTTON, INPUT_PULLUP);
+#if !defined(LED_ADDRESSABLE)
     pinMode(PIN_LED, OUTPUT);
-    digitalWrite(PIN_LED, LOW);
+#endif
+    led(false);
     blink(2, 90);                       // «прошивка стартовала»
 }
 
@@ -35,7 +46,7 @@ void buttonLoop() {
         if (s_down) { s_downAt = now; return; }
 
         uint32_t held = now - s_downAt;
-        digitalWrite(PIN_LED, LOW);
+        led(false);
 
         if (held >= HOLD_RESET) {
             Serial.println("[btn] сброс настроек и перезагрузка");
@@ -52,7 +63,7 @@ void buttonLoop() {
     }
 
     if (s_down && now - s_downAt >= HOLD_RESET) {
-        digitalWrite(PIN_LED, (now / 80) & 1);      // предупреждение о сбросе
+        led((now / 80) & 1);                        // предупреждение о сбросе
         return;
     }
 
@@ -60,6 +71,6 @@ void buttonLoop() {
     static uint32_t last = 0;
     if (now - last > 250) {
         last = now;
-        if (!s_down) digitalWrite(PIN_LED, netApActive() ? HIGH : LOW);
+        if (!s_down) led(netApActive());
     }
 }

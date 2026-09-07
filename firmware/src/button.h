@@ -14,8 +14,16 @@
 // предупреждение о сбросе. Отпустить раньше — ничего не случится.
 #pragma once
 
-static const uint8_t PIN_BUTTON = 0;    // BOOT
-static const uint8_t PIN_LED    = 2;    // синий светодиод на плате
+static const uint8_t PIN_BUTTON = 0;    // BOOT — одинаково на обеих платах
+
+// На обычной плате светодиод простой и висит на GPIO2, на S3 — адресный
+// WS2812 на GPIO48, и зажигается он совсем иначе. Разница спрятана в blink().
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+static const uint8_t PIN_LED = 48;
+#define LED_ADDRESSABLE 1
+#else
+static const uint8_t PIN_LED = 2;
+#endif
 
 void buttonInit();
 void buttonLoop();
