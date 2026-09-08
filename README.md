@@ -32,7 +32,8 @@
 | [BLE-SNIFF.md](BLE-SNIFF.md) | разведка: что инвертор говорит по Bluetooth |
 | [HIDEN-HS35.md](HIDEN-HS35.md) | вторая версия под инвертор Hiden Control HS35-5648PRO |
 | [PLAN.md](PLAN.md) | план решения: схемы подключения, варианты компоновки, этапы, риски |
-| [HIDEN-HS35.md](HIDEN-HS35.md) | второе устройство: протокол, регистры, подключение |
+| [HIDEN-HS35.md](HIDEN-HS35.md) | второе устройство: инвертор Hiden Control HS35 |
+| [ASTERION-PLUS.md](ASTERION-PLUS.md) | третье: инвертор Asterion PLUS 5.6K, диалект Voltronic |
 | [firmware/README.md](firmware/README.md) | прошивка: сборка, настройка, протоколы |
 
 ## Сборка
