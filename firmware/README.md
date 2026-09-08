@@ -15,6 +15,7 @@ ESP32 читает DALY BMS по Bluetooth LE и показывает состо
 |---|---|---|---|
 | `esp32dev` | обычный ESP32 (WROOM) | Bluetooth через донгл Eybond | 65 % от 1,9 МБ |
 | `esp32s3-hs35` | ESP32-S3 | USB через мост CH340 | 36 % от 3,3 МБ |
+| `esp32s3-asterion` | ESP32-S3 | USB, текстовый протокол Voltronic | 36 % от 3,3 МБ |
 
 ```bash
 pio run -e esp32dev                                     # сборка первого
@@ -303,6 +304,9 @@ iOS 12, Safari 12), а он рисует и SVG, и CSS-анимации без 
 | `profile.h` | что такое профиль инвертора: какие блоки читать и как их разложить |
 | `profile_eybond.cpp` | профиль первого инвертора (донгл Eybond, Modbus 9600, адрес 1) |
 | `profile_must.cpp` | профиль второго (Hiden HS35 = MUST PV18, Modbus 19200, адрес 4) |
+| `profile_modbus.h/.cpp` | общая часть профилей на Modbus: запрос блока и склейка ответа |
+| `profile_voltronic.cpp` | профиль третьего (Asterion PLUS = Voltronic, текстовый протокол) |
+| `voltronic.h/.cpp` | протокол Voltronic: XMODEM, команды, разбор ответа по полям |
 | `inv_transport.h` | интерфейс провода до инвертора |
 | `inv_ble.cpp` | транспорт по Bluetooth через донгл Eybond |
 | `inv_usb.cpp` | транспорт по USB через мост CH340 — **пока заглушка** |

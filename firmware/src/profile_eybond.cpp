@@ -3,12 +3,12 @@
 // это рабочая гипотеза, которую надо сверить с показаниями SmartESS.
 #if !defined(TARGET_HS35)
 
-#include "profile.h"
+#include "profile_modbus.h"
 #include "state.h"
 
 const uint8_t  INV_SLAVE = 1;
 const InvBlock INV_BLOCKS[] = { {201, 21}, {231, 3} };
-const uint8_t  INV_NBLOCKS = sizeof(INV_BLOCKS) / sizeof(INV_BLOCKS[0]);
+const uint8_t  INV_NSTEPS = sizeof(INV_BLOCKS) / sizeof(INV_BLOCKS[0]);
 
 // Ответ донгла всегда начинается с восьми ASCII-единиц.
 const uint8_t INV_PREFIX[] = { '1','1','1','1','1','1','1','1' };

@@ -1,19 +1,28 @@
-// Профиль инвертора: какие регистры читать и как разложить их в состояние.
+// Профиль инвертора: что спрашивать и как понимать ответ.
 //
-// Реализация выбирается на сборке: profile_eybond.cpp для первого инвертора
-// (донгл Eybond, Modbus 9600, адрес 1) и profile_must.cpp для второго
-// (Hiden Control HS35 = MUST PV18, USB, Modbus 19200, адрес 4).
+// Первые два инвертора говорят Modbus RTU и различаются лишь скоростью,
+// адресом и картой регистров. Третий говорит текстовым протоколом Voltronic,
+// где регистров нет вовсе — есть команды вроде QPIGS и строка полей в ответе.
+//
+// Поэтому профиль описан не «блоками регистров», а шагами опроса: собрать
+// запрос шага, скормить пришедшие байты, получить «ответ разобран». Что
+// внутри — кадр Modbus или строка с пробелами — знает только сам профиль.
+//
+// Реализации выбираются на сборке:
+//   profile_eybond.cpp    первый инвертор, Modbus через донгл Eybond
+//   profile_must.cpp      второй, Hiden HS35 = MUST PV18, Modbus по USB
+//   profile_voltronic.cpp третий, Asterion PLUS = Voltronic Axpert, ASCII
 #pragma once
 #include <Arduino.h>
 
-struct InvBlock { uint16_t start, count; };
+extern const uint8_t INV_NSTEPS;        // сколько шагов в круге опроса
+extern const char*   INV_PROFILE_NAME;
 
-extern const uint8_t   INV_SLAVE;        // адрес ведомого
-extern const InvBlock  INV_BLOCKS[];     // блоки регистров для опроса по кругу
-extern const uint8_t   INV_NBLOCKS;
-extern const uint8_t   INV_PREFIX[];     // постоянный префикс ответа, если есть
-extern const uint8_t   INV_PREFIX_LEN;
-extern const char*     INV_PROFILE_NAME;
+// Собрать запрос очередного шага. Возвращает длину; 0 — шаг пропускается.
+size_t invBuildRequest(uint8_t step, uint8_t* out, size_t cap);
 
-// Разложить прочитанный блок в снапшот состояния.
-void invApplyBlock(uint16_t start, const uint8_t* words, uint8_t nwords);
+// Скормить пришедшие байты. true — ответ собран, разобран и уложен в снапшот.
+bool   invFeed(uint8_t step, const uint8_t* data, size_t n);
+
+// Сбросить накопленное: перед новым запросом и при обрыве связи.
+void   invResetStream();

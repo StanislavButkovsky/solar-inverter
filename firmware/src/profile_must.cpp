@@ -1,9 +1,9 @@
 // Профиль второго инвертора: Hiden Control HS35-5648PRO, он же MUST PV18 Pro.
 // Modbus 19200, адрес 4, два банка регистров плюс отдельные адреса батареи.
 // Источник карты: vladyspavlov/esphome-must-inverter, разбор в HIDEN-HS35.md.
-#if defined(TARGET_HS35)
+#if defined(TARGET_HS35) && !defined(TARGET_ASTERION)
 
-#include "profile.h"
+#include "profile_modbus.h"
 #include "state.h"
 
 const uint8_t  INV_SLAVE = 4;
@@ -18,7 +18,7 @@ const InvBlock INV_BLOCKS[] = {
     {25273, 2},
     {113,   2},
 };
-const uint8_t  INV_NBLOCKS = sizeof(INV_BLOCKS) / sizeof(INV_BLOCKS[0]);
+const uint8_t  INV_NSTEPS = sizeof(INV_BLOCKS) / sizeof(INV_BLOCKS[0]);
 
 // Мост CH340 прозрачный, никакого префикса перед кадром нет.
 const uint8_t INV_PREFIX[] = { 0 };
