@@ -23,12 +23,14 @@ static const uint32_t RETRY_MS           = 30000;
 static uint32_t       s_apGraceMs       = 120000;  // сколько держать AP после успеха
 static const uint32_t AP_GRACE_AFTER_SAVE = 600000; // после смены сети — дольше
 static const uint32_t AP_HOLD_MAX_MS     = 600000;  // предел паузы попыток STA
+static const uint16_t FAILS_BEFORE_REBOOT = 10;     // ~5 минут безуспешных попыток
 
 static bool     s_apUp        = false;
 static bool     s_mdnsUp      = false;
 static uint32_t s_lastRetry   = 0;
 static uint32_t s_staUpSince  = 0;
 static uint32_t s_clientSince = 0;   // когда к точке доступа подключились
+static uint16_t s_fails       = 0;   // подряд неудачных попыток войти в сеть
 static bool     s_apForced    = false;  // поднята кнопкой — сама не гаснет
 
 // Время нужно журналу: без него события читаются как «столько-то секунд назад»,
@@ -104,6 +106,7 @@ void netStart() {
 
     if (WiFi.status() == WL_CONNECTED) {
         s_staUpSince = millis();
+        s_fails = 0;
         Serial.printf("[net] подключено, адрес %s\n", WiFi.localIP().toString().c_str());
         evAdd(EV_WIFI_UP, WiFi.localIP().toString().c_str());
         startNtp();
@@ -137,6 +140,7 @@ void netLoop() {
     if (connected) {
         if (!s_staUpSince) {
             s_staUpSince = millis();
+            s_fails = 0;
             Serial.printf("[net] подключено, адрес %s\n", WiFi.localIP().toString().c_str());
             evAdd(EV_WIFI_UP, WiFi.localIP().toString().c_str());
             startNtp();
@@ -169,7 +173,9 @@ void netLoop() {
 
     if (millis() - s_lastRetry > RETRY_MS) {
         s_lastRetry = millis();
-        Serial.printf("[net] повтор подключения (%s)\n", wifiWhy());
+        s_fails++;
+        Serial.printf("[net] повтор подключения %u (%s)\n", s_fails, wifiWhy());
+
         if (!s_apUp) {
             // Работали клиентом и потеряли сеть. Поднимаем точку доступа, иначе
             // при смене пароля на роутере до модуля будет не достучаться.
@@ -177,8 +183,25 @@ void netLoop() {
             evAdd(EV_WIFI_DOWN, cfg().ssid.c_str());
             raiseAp(true);
         }
-        WiFi.disconnect();
+
+        // Мягкого повтора мало: радио застревает в состоянии, из которого
+        // WiFi.begin() уже не выводит — по журналу это видно как «не дошло
+        // до подключения». Поэтому сбрасываем интерфейс целиком.
+        WiFi.disconnect(true, false);
+        delay(120);
+        WiFi.mode(s_apUp ? WIFI_AP_STA : WIFI_STA);
         WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
+
+        // Если и это не помогает — перезагрузка. На свежей загрузке модуль
+        // в сеть входит, это проверено; значит застревает именно драйвер,
+        // и держать устройство на стене недоступным ради чистоты подхода
+        // не стоит. Точка доступа при этом никуда не девается.
+        if (s_fails >= FAILS_BEFORE_REBOOT) {
+            Serial.println("[net] сеть не вернулась, перезагружаюсь");
+            evAdd(EV_WIFI_DOWN, "перезагрузка");
+            delay(300);
+            ESP.restart();
+        }
     }
 }
 
