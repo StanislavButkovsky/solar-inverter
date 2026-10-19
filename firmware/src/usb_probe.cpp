@@ -217,18 +217,33 @@ struct Link {
     uint16_t mpsIn = 64;
 };
 
+// Делитель CH34x от 48 МГц, как в ch341_get_divisor() ядра Linux:
+// (0x100 - div) << 8 | fact << 2 | ps. Для 9600 даёт 0xB202, для 19200 0xD902.
+static int ch341Divisor(uint32_t speed) {
+    const int64_t CLK = 48000000;
+    auto clkDiv = [](int ps, int fact) -> int64_t { return 1LL << (12 - 3 * ps - fact); };
+    int ps, fact = 1;
+    for (ps = 3; ps >= 0; ps--)
+        if (speed > CLK / (clkDiv(ps, 1) * 512)) break;
+    if (ps < 0) return -1;
+    int64_t cd  = clkDiv(ps, fact);
+    int64_t div = CLK / (cd * speed);
+    if (div < 9 || div > 255) { div /= 2; cd *= 2; fact = 0; }
+    if (div < 2) return -1;
+    // Следующий делитель, если с ним скорость ближе к нужной.
+    if (16 * CLK / (cd * div) - 16 * (int64_t)speed >= 16 * (int64_t)speed - 16 * CLK / (cd * (div + 1)))
+        div++;
+    if (fact == 1 && div % 2 == 0) { div /= 2; fact = 0; }
+    return (int)((0x100 - div) << 8 | fact << 2 | ps);
+}
+
 // Скорость и формат 8N1. Значения CH34x — по драйверу ch341 из ядра Linux.
 static bool setLine(const Link& L, uint32_t baud, uint16_t chVer) {
     switch (L.kind) {
     case K_CH34X: {
-        // Делитель от 48 МГц: (0x100 - div) << 8 | fact << 2 | ps.
-        uint16_t v;
-        switch (baud) {
-        case 2400:  v = 0xD901; break;
-        case 9600:  v = 0xB202; break;
-        case 19200: v = 0xD902; break;
-        default:    return false;
-        }
+        int d = ch341Divisor(baud);
+        if (d < 0) return false;
+        uint16_t v = (uint16_t)d;
         if (chVer > 0x27) v |= 0x80;        // у новых ревизий — без буферизации
         if (!control(0x40, 0x9A, 0x1312, v, nullptr, 0)) return false;
         control(0x40, 0x9A, 0x2518, 0x00C3, nullptr, 0);   // 8N1, приём и передача
@@ -250,7 +265,19 @@ static bool setLine(const Link& L, uint32_t baud, uint16_t chVer) {
     }
 }
 
-// Однократная подготовка моста: включить, поднять DTR/RTS.
+// Линии DTR и RTS. Их положение — часть вопроса: у первой разведки они были
+// подняты, и HS35 отвечал NAK на любую строку. Если они заведены на сброс
+// или загрузчик связного контроллера инвертора, ответ даёт не тот, кто нужен.
+static void setModem(const Link& L, bool on) {
+    switch (L.kind) {
+    case K_CH34X:  control(0x40, 0xA4, on ? (uint16_t)~0x60 : 0xFFFF, 0, nullptr, 0); break; // инверсная логика
+    case K_CP210X: control(0x41, 0x07, on ? 0x0303 : 0x0300, L.ifc, nullptr, 0); break;
+    case K_CDC:    control(0x21, 0x22, on ? 0x0003 : 0x0000, L.ifcComm, nullptr, 0); break;
+    default: break;
+    }
+}
+
+// Однократная подготовка моста. Линии здесь не трогаем — ими управляет разведка.
 static uint16_t openBridge(const Link& L) {
     uint16_t ver = 0;
     switch (L.kind) {
@@ -260,15 +287,10 @@ static uint16_t openBridge(const Link& L) {
         if (control(0xC0, 0x5F, 0, 0, v, 2, &got) && got >= 1) ver = v[0];
         add("CH34x: версия чипа 0x%02X", ver);
         control(0x40, 0xA1, 0, 0, nullptr, 0);             // инициализация порта
-        control(0x40, 0xA4, (uint16_t)~0x60, 0, nullptr, 0); // DTR и RTS
         break;
     }
     case K_CP210X:
         control(0x41, 0x00, 1, L.ifc, nullptr, 0);         // IFC_ENABLE
-        control(0x41, 0x07, 0x0303, L.ifc, nullptr, 0);    // DTR и RTS
-        break;
-    case K_CDC:
-        control(0x21, 0x22, 0x0003, L.ifcComm, nullptr, 0); // DTR и RTS
         break;
     default: break;
     }
@@ -316,7 +338,7 @@ static bool tryModbus(const Link& L, uint32_t baud, uint8_t slave, uint16_t chVe
     mbBuildRead(req, slave, MB_START, MB_COUNT);
     s_rxLen = 0;
     if (!sendOut(L.epOut, req, sizeof(req))) { add("  отправить не удалось"); return false; }
-    size_t n = collect(1500);
+    size_t n = collect(800);
     if (!n) { add("  тишина"); return false; }
     uint8_t copy[sizeof(s_rx)];
     memcpy(copy, s_rx, n);
@@ -328,20 +350,17 @@ static bool tryModbus(const Link& L, uint32_t baud, uint8_t slave, uint16_t chVe
 // спрашивает только версию протокола.
 static const uint8_t QPI[] = { 'Q', 'P', 'I', 0xBE, 0xAC, 0x0D };
 
-// Текстовые команды-вопросы, все только на чтение. Первая разведка у HS35
-// получила на QPI ответ NAK: провод и скорость верные, но этой команды
-// инвертор не знает. Поэтому перебираем, на что он ответит по существу:
-// классический Voltronic (PI30), затем диалекты с ^P — PI18 и PI17.
-static const char* const TEXT_CMDS[] = {
-    "QPI", "QID", "QVFW", "QMOD", "QPIGS", "QPIRI", "QPIWS", "QFLAG", "QGMN", "QMN",
-    "^P005PI", "^P005ID", "^P005GS", "^P006MOD", "^P003PI",
-};
+// Текстовые команды. Вторая разведка у HS35 (19.10.2026) перебрала 15 команд
+// PI30 и диалектов ^P, с суммой и без, — на все пришло одно голое «NAK\r»
+// без скобки и суммы. Набор поэтому сокращён до QPIGS: важно не какая
+// команда, а ответит ли инвертор иначе при других DTR/RTS и окончании строки.
 
 // Ответ одной строкой: печатное как есть, остальное — \xHH, \r — как \r.
 static String replyLine(const uint8_t* d, size_t n) {
     String s;
     for (size_t i = 0; i < n && s.length() < 120; i++) {
         if (d[i] == 0x0D) s += "\\r";
+        else if (d[i] == 0x0A) s += "\\n";
         else if (d[i] >= 0x20 && d[i] < 0x7F) s += (char)d[i];
         else { char x[6]; snprintf(x, sizeof(x), "\\x%02X", d[i]); s += x; }
     }
@@ -350,43 +369,32 @@ static String replyLine(const uint8_t* d, size_t n) {
 }
 
 // 0 — тишина, 1 — NAK (команду не знает), 2 — ответ по существу.
-static int askText(const Link& L, const char* cmd, bool crc) {
+static int askText(const Link& L, const char* cmd, bool crc, bool crlf) {
     uint8_t req[24];
     size_t n;
-    if (crc) n = vtBuildCommand(cmd, req, sizeof(req));
+    if (crc) n = vtBuildCommand(cmd, req, sizeof(req) - 1);
     else { n = strlen(cmd); memcpy(req, cmd, n); req[n++] = 0x0D; }
-    const char* how = crc ? "" : " без суммы";
+    if (n && crlf) req[n++] = 0x0A;
+    String how = String(crc ? "" : " без суммы") + (crlf ? " +\\n" : "");
     s_rxLen = 0;
-    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", cmd, how); return 0; }
-    size_t got = collect(1200);
-    if (!got) { add("  %s%s: тишина", cmd, how); return 0; }
+    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", cmd, how.c_str()); return 0; }
+    size_t got = collect(1000);
+    if (!got) { add("  %s%s: тишина", cmd, how.c_str()); return 0; }
     uint8_t copy[sizeof(s_rx)];
     memcpy(copy, s_rx, got);
-    add("  %s%s → %s", cmd, how, replyLine(copy, got).c_str());
+    add("  %s%s → %s", cmd, how.c_str(), replyLine(copy, got).c_str());
     bool nak = false;
     for (size_t i = 0; i + 3 <= got; i++)
         if (!memcmp(copy + i, "NAK", 3)) { nak = true; break; }
     return nak ? 1 : 2;
 }
 
-// Сначала одна QPI — понять, жив ли текстовый канал на этой скорости.
-// Ответил хоть чем-то — перебираем весь набор.
-static int tryTextSerial(const Link& L, uint32_t baud, uint16_t chVer, bool sweep) {
-    add("-- %lu 8N1, текстовые команды", (unsigned long)baud);
-    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return 0; }
-    if (!sweep) return askText(L, "QPI", true);
-    int best = 0;
-    for (const char* cmd : TEXT_CMDS) {
-        if (s_gone) break;
-        int r = askText(L, cmd, true);
-        if (r == 1 && !s_gone) {
-            int r2 = askText(L, cmd, false);
-            if (r2 > r) r = r2;
-        }
-        if (r > best) best = r;
-        publish();
-    }
-    return best;
+static bool tryText(const Link& L, uint32_t baud, uint16_t chVer) {
+    add("-- %lu 8N1, QPIGS", (unsigned long)baud);
+    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return false; }
+    bool ok = askText(L, "QPIGS", true, false) == 2;
+    if (!ok && !s_gone) ok = askText(L, "QPIGS", true, true) == 2;
+    return ok;
 }
 
 // HID: команда уходит отчётами SET_REPORT по 8 байт, ответ — с точки прерываний.
@@ -531,28 +539,31 @@ static void probeDevice(uint8_t addr) {
                 publish();
             } else {
                 uint16_t ver = openBridge(L);
-                // Сначала то, что ждём от HS35, потом соседние варианты.
-                struct { uint32_t baud; uint8_t slave; } mb[] = { {19200, 4}, {9600, 4}, {19200, 1}, {9600, 1} };
-                for (auto& t : mb) {
-                    if (s_gone) break;
-                    ok = tryModbus(L, t.baud, t.slave, ver);
-                    publish();
-                    if (ok) break;
-                }
-                // Не Modbus — значит текстовый протокол. Скорость ищем одной
-                // QPI, а на той, где хоть что-то ответило, перебираем набор.
-                // У HS35 так отозвалась 9600, поэтому она первая.
-                static const uint32_t textBaud[] = { 9600, 2400 };
-                for (uint32_t b : textBaud) {
-                    if (ok || s_gone) break;
-                    int r = tryTextSerial(L, b, ver, false);
-                    publish();
-                    if (r == 0) continue;
-                    r = tryTextSerial(L, b, ver, true);
-                    ok = r == 2;
-                    if (!ok) add("  на %lu отвечает только NAK: протокол не опознан", (unsigned long)b);
-                    publish();
-                    break;
+                // Две фазы. Сначала DTR/RTS опущены — так открывает порт
+                // ESPHome, у которого MUST PV18 по USB отвечает Modbus
+                // на 19200, адрес 4. Потом подняты — как было в первых двух
+                // разведках, давших только NAK. Сравнение и есть ответ.
+                static const uint32_t mbBaud[] = { 19200, 9600, 4800, 2400, 38400, 57600, 115200 };
+                static const uint8_t  mbSlave[] = { 4, 1 };
+                static const uint32_t txtBaud[] = { 9600, 2400 };
+                for (int phase = 0; phase < 2 && !ok && !s_gone; phase++) {
+                    bool lines = phase == 1;
+                    setModem(L, lines);
+                    pump(300);
+                    add("== DTR/RTS %s", lines ? "подняты" : "опущены");
+                    for (uint32_t b : mbBaud) {
+                        for (uint8_t a : mbSlave) {
+                            if (ok || s_gone) break;
+                            ok = tryModbus(L, b, a, ver);
+                        }
+                        publish();
+                        if (ok || s_gone) break;
+                    }
+                    for (uint32_t b : txtBaud) {
+                        if (ok || s_gone) break;
+                        ok = tryText(L, b, ver);
+                        publish();
+                    }
                 }
             }
             stopIn(L.epIn);
