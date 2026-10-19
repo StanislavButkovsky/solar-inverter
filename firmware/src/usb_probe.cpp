@@ -237,7 +237,16 @@ static int ch341Divisor(uint32_t speed) {
     return (int)((0x100 - div) << 8 | fact << 2 | ps);
 }
 
-// Скорость и формат 8N1. Значения CH34x — по драйверу ch341 из ядра Linux.
+// Формат байта. Четвёртая разведка у HS35 перебирает его: на 8N1 порт
+// инвертора отвечает NAK на любую строку, а при неверной чётности каждая
+// наша команда доходит до него испорченной.
+struct Fmt { const char* name; uint8_t bits; char parity; uint8_t stop; };
+static const Fmt FMTS[] = {
+    {"8N1", 8, 'N', 1}, {"8E1", 8, 'E', 1}, {"8O1", 8, 'O', 1}, {"8N2", 8, 'N', 2}, {"7E1", 7, 'E', 1},
+};
+static Fmt s_fmt = FMTS[0];
+
+// Скорость и формат. Значения CH34x — по драйверу ch341 из ядра Linux.
 static bool setLine(const Link& L, uint32_t baud, uint16_t chVer) {
     switch (L.kind) {
     case K_CH34X: {
@@ -246,18 +255,25 @@ static bool setLine(const Link& L, uint32_t baud, uint16_t chVer) {
         uint16_t v = (uint16_t)d;
         if (chVer > 0x27) v |= 0x80;        // у новых ревизий — без буферизации
         if (!control(0x40, 0x9A, 0x1312, v, nullptr, 0)) return false;
-        control(0x40, 0x9A, 0x2518, 0x00C3, nullptr, 0);   // 8N1, приём и передача
+        // LCR: приём и передача, длина слова, два стоп-бита, чётность.
+        uint8_t lcr = 0xC0 | (s_fmt.bits - 5);
+        if (s_fmt.stop == 2)      lcr |= 0x04;
+        if (s_fmt.parity != 'N')  lcr |= 0x08;
+        if (s_fmt.parity == 'E')  lcr |= 0x10;
+        control(0x40, 0x9A, 0x2518, lcr, nullptr, 0);
         return true;
     }
     case K_CP210X: {
         uint8_t b[4] = { (uint8_t)baud, (uint8_t)(baud >> 8), (uint8_t)(baud >> 16), 0 };
         if (!control(0x41, 0x1E, 0, L.ifc, b, 4)) return false;   // SET_BAUDRATE
-        control(0x41, 0x03, 0x0800, L.ifc, nullptr, 0);         // 8N1
+        uint16_t par = s_fmt.parity == 'O' ? 1 : s_fmt.parity == 'E' ? 2 : 0;
+        control(0x41, 0x03, (s_fmt.bits << 8) | (par << 4) | (s_fmt.stop == 2 ? 2 : 0), L.ifc, nullptr, 0);
         return true;
     }
     case K_CDC: {
         uint8_t lc[7] = { (uint8_t)baud, (uint8_t)(baud >> 8), (uint8_t)(baud >> 16),
-                          (uint8_t)(baud >> 24), 0, 0, 8 };
+                          (uint8_t)(baud >> 24), (uint8_t)(s_fmt.stop == 2 ? 2 : 0),
+                          (uint8_t)(s_fmt.parity == 'O' ? 1 : s_fmt.parity == 'E' ? 2 : 0), s_fmt.bits };
         return control(0x21, 0x20, 0, L.ifcComm, lc, 7);       // SET_LINE_CODING
     }
     default:
@@ -299,61 +315,13 @@ static uint16_t openBridge(const Link& L) {
 
 // ------------------------------------------------------------------ попытки
 
-static const uint16_t MB_START = 25201, MB_COUNT = 16;
-
-// Разобрать ответ Modbus. true — протокол угадан (в том числе ответом-ошибкой).
-static bool explainModbus(uint8_t slave, const uint8_t* r, size_t n) {
-    if (n >= 5 && r[0] == slave && (r[1] & 0x80)) {
-        add("  ответ-ошибка Modbus, код %u: протокол и адрес верные, регистра нет", r[2]);
-        return true;
-    }
-    if (n < 5 || r[0] != slave || r[1] != 0x03) {
-        add("  на Modbus не похоже");
-        return false;
-    }
-    size_t need = 3 + r[2] + 2;
-    if (n < need) { add("  кадр Modbus обрезан: %u из %u байт", (unsigned)n, (unsigned)need); return true; }
-    uint16_t crc = r[need - 2] | (r[need - 1] << 8);
-    if (crc != mbCrc16(r, need - 2)) { add("  кадр Modbus, но контрольная сумма не сошлась"); return true; }
-
-    add("  Modbus RTU отвечает, контрольная сумма верна");
-    auto R = [&](uint16_t reg) -> int {
-        int i = reg - MB_START;
-        return (i >= 0 && i * 2 + 1 < r[2]) ? (int)((r[3 + i * 2] << 8) | r[4 + i * 2]) : -1;
-    };
-    add("  25201 режим работы       %d", R(25201));
-    add("  25205 батарея            %.1f В", R(25205) * 0.1f);
-    add("  25206 выход              %.1f В", R(25206) * 0.1f);
-    add("  25207 сеть               %.1f В", R(25207) * 0.1f);
-    add("  25213 мощность инвертора %d Вт", R(25213));
-    add("  25216 загрузка           %d %%", R(25216));
-    return true;
-}
-
-static bool tryModbus(const Link& L, uint32_t baud, uint8_t slave, uint16_t chVer) {
-    add("-- %lu 8N1, Modbus адрес %u, регистры %u…%u", (unsigned long)baud, slave,
-        MB_START, MB_START + MB_COUNT - 1);
-    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return false; }
-    uint8_t req[8];
-    mbBuildRead(req, slave, MB_START, MB_COUNT);
-    s_rxLen = 0;
-    if (!sendOut(L.epOut, req, sizeof(req))) { add("  отправить не удалось"); return false; }
-    size_t n = collect(800);
-    if (!n) { add("  тишина"); return false; }
-    uint8_t copy[sizeof(s_rx)];
-    memcpy(copy, s_rx, n);
-    addHex("  ответ:", copy, n);
-    return explainModbus(slave, copy, n);
-}
-
 // QPI с готовой суммой XMODEM: "QPI" BE AC \r — самая безобидная команда,
 // спрашивает только версию протокола.
 static const uint8_t QPI[] = { 'Q', 'P', 'I', 0xBE, 0xAC, 0x0D };
 
 // Текстовые команды. Вторая разведка у HS35 (19.10.2026) перебрала 15 команд
 // PI30 и диалектов ^P, с суммой и без, — на все пришло одно голое «NAK\r»
-// без скобки и суммы. Набор поэтому сокращён до QPIGS: важно не какая
-// команда, а ответит ли инвертор иначе при других DTR/RTS и окончании строки.
+// без скобки и суммы. Дальше словарь и способы отправки перебирает батарея.
 
 // Ответ одной строкой: печатное как есть, остальное — \xHH, \r — как \r.
 static String replyLine(const uint8_t* d, size_t n) {
@@ -368,76 +336,148 @@ static String replyLine(const uint8_t* d, size_t n) {
     return s;
 }
 
-// 0 — тишина, 1 — NAK (команду не знает), 2 — ответ по существу.
-static int askText(const Link& L, const char* label, const char* cmd, bool crc, bool crlf) {
-    uint8_t req[24];
-    size_t n;
-    if (crc) n = vtBuildCommand(cmd, req, sizeof(req) - 1);
-    else { n = strlen(cmd); memcpy(req, cmd, n); req[n++] = 0x0D; }
-    if (n && crlf) req[n++] = 0x0A;
-    String how = String(crc ? "" : " без суммы") + (crlf ? " +\\n" : "");
+// Третья и четвёртая разведки у HS35 (19.10.2026): DTR/RTS ни на что не
+// влияют; порт отвечает только на 9600, на 1200…115200 остальных тишина;
+// Modbus RTU молчит на всех адресах 1…247 — «ответили» лишь 13 и 14, но это
+// 0x0D в кадре, который порт счёл концом строки и вернул NAK. То есть порт
+// разбирает строки. Последний неперебранный параметр — формат байта, а
+// строчный протокол на Modbus — это Modbus ASCII, ему как раз нужен 7E1.
+
+// ------------------------------------------------------------------ батарея
+
+// Один поход к инвертору — все проверки разом, без остановки на первом успехе.
+// NAK и тишину только считаем; всё прочее пишем целиком и выносим в итог.
+
+static int    s_nak = 0, s_sil = 0, s_more = 0;
+static int    s_hitCount = 0;
+static String s_hits;                       // ответы не NAK — для итога
+
+static bool hasNak(const uint8_t* d, size_t n) {
+    for (size_t i = 0; i + 3 <= n; i++) if (!memcmp(d + i, "NAK", 3)) return true;
+    return false;
+}
+
+// Отправить и подождать. gapMs > 0 — побайтно, с паузой между байтами.
+static size_t exchange(const Link& L, const uint8_t* req, size_t n, uint32_t waitMs,
+                       uint8_t* out, uint16_t gapMs = 0) {
     s_rxLen = 0;
-    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", label, how.c_str()); return 0; }
-    size_t got = collect(1000);
-    if (!got) { add("  %s%s: тишина", label, how.c_str()); return 0; }
-    uint8_t copy[sizeof(s_rx)];
-    memcpy(copy, s_rx, got);
-    add("  %s%s → %s", label, how.c_str(), replyLine(copy, got).c_str());
-    bool nak = false;
-    for (size_t i = 0; i + 3 <= got; i++)
-        if (!memcmp(copy + i, "NAK", 3)) { nak = true; break; }
-    return nak ? 1 : 2;
+    if (gapMs) {
+        for (size_t i = 0; i < n && !s_gone; i++) { sendOut(L.epOut, req + i, 1); pump(gapMs); }
+    } else if (n && !sendOut(L.epOut, req, n)) {
+        return 0;
+    }
+    size_t got = collect(waitMs);
+    memcpy(out, s_rx, got);
+    return got;
 }
 
-// Третья разведка у HS35 (19.10.2026): DTR/RTS ни на что не влияют, на 9600
-// любая строка получает NAK, на 2400 тишина, Modbus с адресами 4 и 1 молчит
-// на всех скоростях. Похоже на прошивку с текстовым разбором и Modbus на
-// незнакомом адресе: кадр с чужим адресом она игнорирует молча. Отсюда два шага.
+// Учесть результат. true — ответ не NAK и не тишина.
+static bool note(const char* label, const uint8_t* d, size_t n) {
+    if (!n)            { s_sil++; return false; }
+    if (hasNak(d, n))  { s_nak++; return false; }
+    // Если инвертор вдруг отвечает на всё подряд, первых 30 ответов хватит
+    // для разбора, а отчёт не должен раздуться и забить NVS.
+    if (++s_hitCount > 30) { s_more++; return true; }
+    String line = String(label) + " → " + replyLine(d, n);
+    add("  ✓ %s", line.c_str());
+    if (s_hits.length() < 1500) s_hits += "  " + line + "\n";
+    return true;
+}
 
-// Шаг 1: на какой скорости порт инвертора. Там, где пришёл чистый ответ.
-static const uint32_t SWEEP_BAUD[] = { 1200, 2400, 4800, 9600, 14400, 19200, 38400, 57600, 115200 };
+static void groupStart(const char* title) { s_nak = s_sil = s_more = 0; add("== %s", title); }
+static void groupEnd() {
+    if (s_more) add("  NAK: %d, тишина: %d, ещё ответов без подробностей: %d", s_nak, s_sil, s_more);
+    else        add("  NAK: %d, тишина: %d", s_nak, s_sil);
+    publish();
+}
 
-static uint32_t findBaud(const Link& L, uint16_t chVer) {
-    add("-- скорость порта: QPIGS на каждой");
-    uint32_t found = 0;
-    for (uint32_t b : SWEEP_BAUD) {
+// Текстовая команда: с суммой XMODEM или без, и с выбранным окончанием.
+static size_t buildText(uint8_t* out, const char* cmd, bool crc, const char* tail) {
+    size_t n = strlen(cmd);
+    memcpy(out, cmd, n);
+    if (crc) {
+        uint16_t c = vtCrc16(out, n);
+        out[n++] = c >> 8;
+        out[n++] = c & 0xFF;
+    }
+    size_t t = strlen(tail);
+    memcpy(out + n, tail, t);
+    return n + t;
+}
+
+// Пятая разведка (19.10.2026) нашла язык: Megatec Q1, как у ИБП, 9600 8N1.
+// Q1 ответил только побайтно с паузой 20 мс — целиком получил NAK: порт
+// инвертора не успевает за плотным потоком. Ответили также QGS (номиналы)
+// и F (строка с R1.4.020). Словарь там уходил целиком, поэтому его NAK
+// ничего не доказывают — здесь он идёт побайтно.
+//
+// Только вопросы. Из Megatec намеренно исключены действия: Q (пищалка),
+// T, TL, Tn (тест батареи), S… (выключение), C, CT (отмена).
+static const char* const DICT[] = {
+    // Megatec и его расширения у ИБП Voltronic
+    "Q1", "QS", "F", "I", "M", "QGS", "QBV", "QMD", "QRI", "QWS", "QMF", "QFS", "QFW",
+    "QBYV", "QBYF", "QLDL", "QHE", "QLE", "QFRE", "QPD", "QTPR", "QSN", "QVFW", "QID",
+    // Voltronic PI30
+    "QPI", "QMOD", "QPIGS", "QPIGS2", "QPIRI", "QPIWS", "QFLAG", "QDI", "QMCHGCR",
+    "QMUCHGCR", "QOPM", "QBOOT", "QET", "QT", "QSID", "QGMN", "QMN", "QCHGS", "QPGS0",
+    "QBMS", "QBATCD", "QEY", "QEM", "QED", "QLT",
+    // PI18 и PI17
+    "^P005GS", "^P005PI", "^P006MOD", "^P005ID", "^P005FWS", "^P004T", "^P003PI", "^P003GS",
+};
+
+static void runBattery(const Link& L, uint16_t ver) {
+    uint8_t req[48], rsp[sizeof(s_rx)];
+    char label[64];
+    s_hits = "";
+    s_hitCount = 0;
+    s_fmt = FMTS[0];
+    setLine(L, 9600, ver);
+
+    // 1. Насколько медленно слать: самая короткая пауза, при которой Q1 отвечает.
+    groupStart("Q1 с разной паузой между байтами");
+    static const uint16_t gaps[] = { 0, 2, 5, 10, 20, 50 };
+    for (uint16_t g : gaps) {
         if (s_gone) break;
-        char label[16];
-        snprintf(label, sizeof(label), "%lu", (unsigned long)b);
-        if (!setLine(L, b, chVer)) { add("  %s: не выставить", label); continue; }
-        pump(50);
-        if (askText(L, label, "QPIGS", true, false) >= 1 && !found) found = b;
+        size_t n = exchange(L, req, buildText(req, "Q1", false, "\r"), 1200, rsp, g ? g : 0);
+        snprintf(label, sizeof(label), "Q1 пауза %u мс", g);
+        note(label, rsp, n);
     }
-    publish();
-    return found;
-}
+    groupEnd();
 
-// Шаг 2: перебор адресов, по одному регистру. Отозвался хоть чем-то, включая
-// ответ-ошибку, — адрес найден. Пауза 350 мс: ESPHome держит инвертору 300.
-static int mbScan(const Link& L, uint8_t fn, int from, int to) {
-    add("-- Modbus, функция %02X, адреса %d…%d", fn, from, to);
-    for (int a = from; a <= to && !s_gone; a++) {
-        uint8_t req[8] = { (uint8_t)a, fn, (uint8_t)(MB_START >> 8), (uint8_t)(MB_START & 0xFF), 0, 1 };
-        uint16_t c = mbCrc16(req, 6);
-        req[6] = c & 0xFF;
-        req[7] = c >> 8;
-        s_rxLen = 0;
-        if (!sendOut(L.epOut, req, sizeof(req))) { add("  отправить не удалось"); return -1; }
-        size_t n = collect(350);
-        if (n) {
-            uint8_t copy[64];
-            size_t k = n < sizeof(copy) ? n : sizeof(copy);
-            memcpy(copy, s_rx, k);
-            char t[24];
-            snprintf(t, sizeof(t), "  адрес %d:", a);
-            addHex(t, copy, k);
-            if (copy[0] == a) { publish(); return a; }
-        }
-        if (a % 32 == 0) publish();
+    // 2. Весь словарь медленно: какие ещё вопросы этот порт понимает.
+    groupStart("словарь побайтно, пауза 20 мс, без суммы");
+    int k = 0;
+    for (const char* cmd : DICT) {
+        if (s_gone) break;
+        size_t n = exchange(L, req, buildText(req, cmd, false, "\r"), 1200, rsp, 20);
+        note(cmd, rsp, n);
+        if (++k % 15 == 0) publish();        // страница видит ход, NVS не дёргаем на каждой
     }
-    add("  ни один адрес не ответил");
-    publish();
-    return -1;
+    groupEnd();
+
+    // 3. Те же вопросы с суммой XMODEM — на случай, если её требуют
+    // именно расширенные команды.
+    groupStart("словарь побайтно, пауза 20 мс, с суммой");
+    for (const char* cmd : DICT) {
+        if (s_gone) break;
+        size_t n = exchange(L, req, buildText(req, cmd, true, "\r"), 1200, rsp, 20);
+        snprintf(label, sizeof(label), "%s с суммой", cmd);
+        note(label, rsp, n);
+    }
+    groupEnd();
+
+    // 4. Устойчивость: Q1 пять раз подряд — для будущего опроса раз в секунды.
+    groupStart("Q1 пять раз подряд, пауза 20 мс");
+    for (int i = 1; i <= 5 && !s_gone; i++) {
+        size_t n = exchange(L, req, buildText(req, "Q1", false, "\r"), 1200, rsp, 20);
+        snprintf(label, sizeof(label), "Q1 №%d", i);
+        note(label, rsp, n);
+    }
+    groupEnd();
+
+    add("== ИТОГ");
+    if (s_hits.length()) { add("ответы не NAK, всего %d:", s_hitCount); s_txt += s_hits; }
+    else add("ни одного ответа, кроме NAK и тишины");
 }
 
 // HID: команда уходит отчётами SET_REPORT по 8 байт, ответ — с точки прерываний.
@@ -582,23 +622,10 @@ static void probeDevice(uint8_t addr) {
                 publish();
             } else {
                 uint16_t ver = openBridge(L);
-                // Линии опущены, как у ESPHome: на ответ они не влияют
-                // (проверено третьей разведкой), но так порт открывают все.
                 setModem(L, false);
                 pump(300);
-                uint32_t baud = findBaud(L, ver);
-                if (!baud) {
-                    add("итог: ни на одной скорости инвертор не ответил");
-                } else if (!s_gone) {
-                    add("скорость порта: %lu", (unsigned long)baud);
-                    setLine(L, baud, ver);
-                    int addr = mbScan(L, 0x03, 1, 247);
-                    if (addr < 0 && !s_gone) addr = mbScan(L, 0x04, 1, 16);
-                    if (addr > 0 && !s_gone) {
-                        add("адрес Modbus: %d", addr);
-                        ok = tryModbus(L, baud, addr, ver);
-                    }
-                }
+                runBattery(L, ver);
+                ok = s_hits.length() > 0;
                 publish();
             }
             stopIn(L.epIn);
