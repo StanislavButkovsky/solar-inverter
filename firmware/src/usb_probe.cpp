@@ -369,7 +369,7 @@ static String replyLine(const uint8_t* d, size_t n) {
 }
 
 // 0 — тишина, 1 — NAK (команду не знает), 2 — ответ по существу.
-static int askText(const Link& L, const char* cmd, bool crc, bool crlf) {
+static int askText(const Link& L, const char* label, const char* cmd, bool crc, bool crlf) {
     uint8_t req[24];
     size_t n;
     if (crc) n = vtBuildCommand(cmd, req, sizeof(req) - 1);
@@ -377,24 +377,67 @@ static int askText(const Link& L, const char* cmd, bool crc, bool crlf) {
     if (n && crlf) req[n++] = 0x0A;
     String how = String(crc ? "" : " без суммы") + (crlf ? " +\\n" : "");
     s_rxLen = 0;
-    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", cmd, how.c_str()); return 0; }
+    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", label, how.c_str()); return 0; }
     size_t got = collect(1000);
-    if (!got) { add("  %s%s: тишина", cmd, how.c_str()); return 0; }
+    if (!got) { add("  %s%s: тишина", label, how.c_str()); return 0; }
     uint8_t copy[sizeof(s_rx)];
     memcpy(copy, s_rx, got);
-    add("  %s%s → %s", cmd, how.c_str(), replyLine(copy, got).c_str());
+    add("  %s%s → %s", label, how.c_str(), replyLine(copy, got).c_str());
     bool nak = false;
     for (size_t i = 0; i + 3 <= got; i++)
         if (!memcmp(copy + i, "NAK", 3)) { nak = true; break; }
     return nak ? 1 : 2;
 }
 
-static bool tryText(const Link& L, uint32_t baud, uint16_t chVer) {
-    add("-- %lu 8N1, QPIGS", (unsigned long)baud);
-    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return false; }
-    bool ok = askText(L, "QPIGS", true, false) == 2;
-    if (!ok && !s_gone) ok = askText(L, "QPIGS", true, true) == 2;
-    return ok;
+// Третья разведка у HS35 (19.10.2026): DTR/RTS ни на что не влияют, на 9600
+// любая строка получает NAK, на 2400 тишина, Modbus с адресами 4 и 1 молчит
+// на всех скоростях. Похоже на прошивку с текстовым разбором и Modbus на
+// незнакомом адресе: кадр с чужим адресом она игнорирует молча. Отсюда два шага.
+
+// Шаг 1: на какой скорости порт инвертора. Там, где пришёл чистый ответ.
+static const uint32_t SWEEP_BAUD[] = { 1200, 2400, 4800, 9600, 14400, 19200, 38400, 57600, 115200 };
+
+static uint32_t findBaud(const Link& L, uint16_t chVer) {
+    add("-- скорость порта: QPIGS на каждой");
+    uint32_t found = 0;
+    for (uint32_t b : SWEEP_BAUD) {
+        if (s_gone) break;
+        char label[16];
+        snprintf(label, sizeof(label), "%lu", (unsigned long)b);
+        if (!setLine(L, b, chVer)) { add("  %s: не выставить", label); continue; }
+        pump(50);
+        if (askText(L, label, "QPIGS", true, false) >= 1 && !found) found = b;
+    }
+    publish();
+    return found;
+}
+
+// Шаг 2: перебор адресов, по одному регистру. Отозвался хоть чем-то, включая
+// ответ-ошибку, — адрес найден. Пауза 350 мс: ESPHome держит инвертору 300.
+static int mbScan(const Link& L, uint8_t fn, int from, int to) {
+    add("-- Modbus, функция %02X, адреса %d…%d", fn, from, to);
+    for (int a = from; a <= to && !s_gone; a++) {
+        uint8_t req[8] = { (uint8_t)a, fn, (uint8_t)(MB_START >> 8), (uint8_t)(MB_START & 0xFF), 0, 1 };
+        uint16_t c = mbCrc16(req, 6);
+        req[6] = c & 0xFF;
+        req[7] = c >> 8;
+        s_rxLen = 0;
+        if (!sendOut(L.epOut, req, sizeof(req))) { add("  отправить не удалось"); return -1; }
+        size_t n = collect(350);
+        if (n) {
+            uint8_t copy[64];
+            size_t k = n < sizeof(copy) ? n : sizeof(copy);
+            memcpy(copy, s_rx, k);
+            char t[24];
+            snprintf(t, sizeof(t), "  адрес %d:", a);
+            addHex(t, copy, k);
+            if (copy[0] == a) { publish(); return a; }
+        }
+        if (a % 32 == 0) publish();
+    }
+    add("  ни один адрес не ответил");
+    publish();
+    return -1;
 }
 
 // HID: команда уходит отчётами SET_REPORT по 8 байт, ответ — с точки прерываний.
@@ -539,32 +582,24 @@ static void probeDevice(uint8_t addr) {
                 publish();
             } else {
                 uint16_t ver = openBridge(L);
-                // Две фазы. Сначала DTR/RTS опущены — так открывает порт
-                // ESPHome, у которого MUST PV18 по USB отвечает Modbus
-                // на 19200, адрес 4. Потом подняты — как было в первых двух
-                // разведках, давших только NAK. Сравнение и есть ответ.
-                static const uint32_t mbBaud[] = { 19200, 9600, 4800, 2400, 38400, 57600, 115200 };
-                static const uint8_t  mbSlave[] = { 4, 1 };
-                static const uint32_t txtBaud[] = { 9600, 2400 };
-                for (int phase = 0; phase < 2 && !ok && !s_gone; phase++) {
-                    bool lines = phase == 1;
-                    setModem(L, lines);
-                    pump(300);
-                    add("== DTR/RTS %s", lines ? "подняты" : "опущены");
-                    for (uint32_t b : mbBaud) {
-                        for (uint8_t a : mbSlave) {
-                            if (ok || s_gone) break;
-                            ok = tryModbus(L, b, a, ver);
-                        }
-                        publish();
-                        if (ok || s_gone) break;
-                    }
-                    for (uint32_t b : txtBaud) {
-                        if (ok || s_gone) break;
-                        ok = tryText(L, b, ver);
-                        publish();
+                // Линии опущены, как у ESPHome: на ответ они не влияют
+                // (проверено третьей разведкой), но так порт открывают все.
+                setModem(L, false);
+                pump(300);
+                uint32_t baud = findBaud(L, ver);
+                if (!baud) {
+                    add("итог: ни на одной скорости инвертор не ответил");
+                } else if (!s_gone) {
+                    add("скорость порта: %lu", (unsigned long)baud);
+                    setLine(L, baud, ver);
+                    int addr = mbScan(L, 0x03, 1, 247);
+                    if (addr < 0 && !s_gone) addr = mbScan(L, 0x04, 1, 16);
+                    if (addr > 0 && !s_gone) {
+                        add("адрес Modbus: %d", addr);
+                        ok = tryModbus(L, baud, addr, ver);
                     }
                 }
+                publish();
             }
             stopIn(L.epIn);
         } else if (claimed) {
