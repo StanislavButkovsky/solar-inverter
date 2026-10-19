@@ -12,7 +12,9 @@
 
 #include "usb_probe.h"
 #include "modbus.h"
+#include "voltronic.h"
 #include <Preferences.h>
+#include <memory>
 #include <stdarg.h>
 #include "usb/usb_host.h"
 
@@ -64,11 +66,14 @@ static void addText(const char* title, const uint8_t* d, size_t n) {
 
 // Публикуем по ходу, а не только в конце: если инвертор выдернут на середине
 // или плата зависнет, дескрипторы уже будут сохранены.
+// Блобом, а не строкой: строковое значение NVS упирается в 4 КБ, а отчёт
+// с перебором команд и русским текстом (два байта на букву) бывает длиннее.
 static void publish() {
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     s_report = s_txt;
     xSemaphoreGive(s_mtx);
-    s_prefs.putString("rep", s_txt);
+    if (s_prefs.putBytes("repb", s_txt.c_str(), s_txt.length()) != s_txt.length())
+        Serial.printf("[usb] отчёт в NVS НЕ записался (%u байт)\n", (unsigned)s_txt.length());
 }
 
 // ------------------------------------------------------------------ передачи
@@ -323,20 +328,65 @@ static bool tryModbus(const Link& L, uint32_t baud, uint8_t slave, uint16_t chVe
 // спрашивает только версию протокола.
 static const uint8_t QPI[] = { 'Q', 'P', 'I', 0xBE, 0xAC, 0x0D };
 
-static bool tryQpiSerial(const Link& L, uint32_t baud, uint16_t chVer) {
-    add("-- %lu 8N1, Voltronic QPI", (unsigned long)baud);
-    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return false; }
+// Текстовые команды-вопросы, все только на чтение. Первая разведка у HS35
+// получила на QPI ответ NAK: провод и скорость верные, но этой команды
+// инвертор не знает. Поэтому перебираем, на что он ответит по существу:
+// классический Voltronic (PI30), затем диалекты с ^P — PI18 и PI17.
+static const char* const TEXT_CMDS[] = {
+    "QPI", "QID", "QVFW", "QMOD", "QPIGS", "QPIRI", "QPIWS", "QFLAG", "QGMN", "QMN",
+    "^P005PI", "^P005ID", "^P005GS", "^P006MOD", "^P003PI",
+};
+
+// Ответ одной строкой: печатное как есть, остальное — \xHH, \r — как \r.
+static String replyLine(const uint8_t* d, size_t n) {
+    String s;
+    for (size_t i = 0; i < n && s.length() < 120; i++) {
+        if (d[i] == 0x0D) s += "\\r";
+        else if (d[i] >= 0x20 && d[i] < 0x7F) s += (char)d[i];
+        else { char x[6]; snprintf(x, sizeof(x), "\\x%02X", d[i]); s += x; }
+    }
+    if (n > 0 && s.length() >= 120) s += "…";
+    return s;
+}
+
+// 0 — тишина, 1 — NAK (команду не знает), 2 — ответ по существу.
+static int askText(const Link& L, const char* cmd, bool crc) {
+    uint8_t req[24];
+    size_t n;
+    if (crc) n = vtBuildCommand(cmd, req, sizeof(req));
+    else { n = strlen(cmd); memcpy(req, cmd, n); req[n++] = 0x0D; }
+    const char* how = crc ? "" : " без суммы";
     s_rxLen = 0;
-    if (!sendOut(L.epOut, QPI, sizeof(QPI))) { add("  отправить не удалось"); return false; }
-    size_t n = collect(1500);
-    if (!n) { add("  тишина"); return false; }
+    if (!n || !sendOut(L.epOut, req, n)) { add("  %s%s: отправить не удалось", cmd, how); return 0; }
+    size_t got = collect(1200);
+    if (!got) { add("  %s%s: тишина", cmd, how); return 0; }
     uint8_t copy[sizeof(s_rx)];
-    memcpy(copy, s_rx, n);
-    addHex("  ответ:", copy, n);
-    addText("  текстом:", copy, n);
-    bool ok = copy[0] == '(';
-    add(ok ? "  Voltronic отвечает" : "  на Voltronic не похоже");
-    return ok;
+    memcpy(copy, s_rx, got);
+    add("  %s%s → %s", cmd, how, replyLine(copy, got).c_str());
+    bool nak = false;
+    for (size_t i = 0; i + 3 <= got; i++)
+        if (!memcmp(copy + i, "NAK", 3)) { nak = true; break; }
+    return nak ? 1 : 2;
+}
+
+// Сначала одна QPI — понять, жив ли текстовый канал на этой скорости.
+// Ответил хоть чем-то — перебираем весь набор.
+static int tryTextSerial(const Link& L, uint32_t baud, uint16_t chVer, bool sweep) {
+    add("-- %lu 8N1, текстовые команды", (unsigned long)baud);
+    if (!setLine(L, baud, chVer)) { add("  не удалось выставить скорость"); return 0; }
+    if (!sweep) return askText(L, "QPI", true);
+    int best = 0;
+    for (const char* cmd : TEXT_CMDS) {
+        if (s_gone) break;
+        int r = askText(L, cmd, true);
+        if (r == 1 && !s_gone) {
+            int r2 = askText(L, cmd, false);
+            if (r2 > r) r = r2;
+        }
+        if (r > best) best = r;
+        publish();
+    }
+    return best;
 }
 
 // HID: команда уходит отчётами SET_REPORT по 8 байт, ответ — с точки прерываний.
@@ -489,12 +539,20 @@ static void probeDevice(uint8_t addr) {
                     publish();
                     if (ok) break;
                 }
-                // Не Modbus — может, текстовый Voltronic: у него обычно 2400.
-                static const uint32_t qpiBaud[] = { 2400, 9600 };
-                for (uint32_t b : qpiBaud) {
+                // Не Modbus — значит текстовый протокол. Скорость ищем одной
+                // QPI, а на той, где хоть что-то ответило, перебираем набор.
+                // У HS35 так отозвалась 9600, поэтому она первая.
+                static const uint32_t textBaud[] = { 9600, 2400 };
+                for (uint32_t b : textBaud) {
                     if (ok || s_gone) break;
-                    ok = tryQpiSerial(L, b, ver);
+                    int r = tryTextSerial(L, b, ver, false);
                     publish();
+                    if (r == 0) continue;
+                    r = tryTextSerial(L, b, ver, true);
+                    ok = r == 2;
+                    if (!ok) add("  на %lu отвечает только NAK: протокол не опознан", (unsigned long)b);
+                    publish();
+                    break;
                 }
             }
             stopIn(L.epIn);
@@ -526,6 +584,37 @@ static void clientCb(const usb_host_client_event_msg_t* m, void*) {
     else if (m->event == USB_HOST_CLIENT_EVENT_DEV_GONE) s_gone = true;
 }
 
+// Самый ранний след устройства: библиотека зовёт это, как только прочитала
+// дескриптор, ещё до выбора конфигурации. Если дальше подключение сорвётся,
+// событие NEW_DEV не придёт вовсе — а VID:PID у нас уже будет.
+static volatile bool     s_enumSeen = false;
+static volatile uint32_t s_enumMs   = 0;
+static usb_device_desc_t s_enumDesc;
+
+static bool enumFilter(const usb_device_desc_t* d, uint8_t* bConfigurationValue) {
+    memcpy(&s_enumDesc, d, sizeof(s_enumDesc));
+    s_enumMs   = millis();
+    s_enumSeen = true;
+    *bConfigurationValue = 1;
+    return true;
+}
+
+static void reportStuckEnum() {
+    s_count++;
+    s_prefs.putUInt("n", s_count);
+    s_txt = "";
+    add("=== разведка USB №%lu ===", (unsigned long)s_count);
+    add("устройство ответило дескриптором через %lu с после включения платы",
+        (unsigned long)(s_enumMs / 1000));
+    add("VID:PID %04x:%04x — %s", s_enumDesc.idVendor, s_enumDesc.idProduct,
+        knownName(s_enumDesc.idVendor, s_enumDesc.idProduct));
+    add("класс устройства %02X/%02X/%02X, EP0 %u байт", s_enumDesc.bDeviceClass,
+        s_enumDesc.bDeviceSubClass, s_enumDesc.bDeviceProtocol, s_enumDesc.bMaxPacketSize0);
+    add("итог: подключение не завершилось — выбор конфигурации сорвался");
+    publish();
+    s_state = 2;
+}
+
 static void hostTask(void*) {
     for (;;) {
         uint32_t flags;
@@ -550,22 +639,62 @@ static void clientTask(void*) {
             uint8_t a = s_newAddr;
             s_newAddr = 0;
             s_gone = false;
+            s_enumSeen = false;
             probeDevice(a);
+        }
+        // Сколько устройств видит сама библиотека, независимо от событий:
+        // если здесь больше нуля, а разведки не было — ошибка у нас, а не в проводе.
+        static uint32_t lastDiag = 0;
+        static int      lastDevs = -1;
+        if (millis() - lastDiag > 2000) {
+            lastDiag = millis();
+            usb_host_lib_info_t li;
+            if (usb_host_lib_info(&li) == ESP_OK && li.num_devices != lastDevs) {
+                lastDevs = li.num_devices;
+                Serial.printf("[usb] устройств на шине: %d, клиентов: %d\n", li.num_devices, li.num_clients);
+            }
+        }
+        // Дескриптор был, а события о новом устройстве за 5 с так и нет.
+        if (s_enumSeen && millis() - s_enumMs > 5000) {
+            s_enumSeen = false;
+            reportStuckEnum();
         }
     }
 }
 
 void usbProbeStart() {
     s_mtx = xSemaphoreCreateMutex();
-    s_prefs.begin("usbprobe", false);
-    s_report = s_prefs.getString("rep", "");
+    // Отчёт ценен ровно тем, что переживает питание: первый из них, снятый
+    // у инвертора, дома в памяти не нашёлся. Поэтому здесь проверка на
+    // каждой загрузке — пространство открылось и счётчик загрузок растёт.
+    bool opened = s_prefs.begin("usbprobe", false);
+    uint32_t boots = s_prefs.getUInt("boots", 0) + 1;
+    size_t wrote = s_prefs.putUInt("boots", boots);
+    Serial.printf("[usb] NVS разведки: %s, загрузка №%lu%s\n", opened ? "открыто" : "НЕ ОТКРЫЛОСЬ",
+                  (unsigned long)boots, wrote ? "" : ", запись НЕ ПРОШЛА");
+    size_t len = s_prefs.getBytesLength("repb");
+    if (len) {
+        std::unique_ptr<char[]> b(new char[len + 1]);
+        s_prefs.getBytes("repb", b.get(), len);
+        b[len] = 0;
+        s_report = b.get();
+    } else {
+        s_report = s_prefs.getString("rep", "");   // отчёт прошлой версии, строкой
+    }
     s_count  = s_prefs.getUInt("n", 0);
     Serial.printf("[usb] сохранённый отчёт разведки: %s (команда usb — показать)\n",
                   s_report.length() ? "есть" : "нет");
 
+    // Ошибки самой библиотеки хоста — в терминал: если подключение срывается
+    // до дескриптора, кроме них о нём не узнать ничего. Выше ERROR библиотеки
+    // ядра всё равно не собраны.
+    static const char* tags[] = { "USBH", "ENUM", "HUB", "EXT_HUB", "EXT_PORT", "HCD DWC", "USB HOST" };
+    for (const char* t : tags) esp_log_level_set(t, ESP_LOG_ERROR);
+
     usb_host_config_t hc = {};
     hc.skip_phy_setup = false;
     hc.intr_flags     = ESP_INTR_FLAG_LEVEL1;
+    hc.enum_filter_cb = enumFilter;
     if (usb_host_install(&hc) != ESP_OK) {
         Serial.println("[usb] USB-хост не поднялся");
         return;
