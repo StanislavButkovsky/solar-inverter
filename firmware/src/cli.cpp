@@ -5,6 +5,7 @@
 #include "daly.h"
 #include "sim.h"
 #include "inv.h"
+#include "inv_transport.h"
 #include <WiFi.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -50,6 +51,8 @@ static void printStatus() {
     bool unbound = cfg().invMac.isEmpty();
 #endif
     if (unbound) Serial.println("  донгл не привязан (inv mac <адрес>)");
+    String trlog = invTrReport();
+    if (trlog.length()) { Serial.println("  сохранённый сеанс:"); Serial.print(trlog); }
     else {
         Serial.printf("  связь: %s%s\n", v.linked ? "есть" : "нет",
                       v.linked && !v.fresh ? " (данные устарели)" : "");

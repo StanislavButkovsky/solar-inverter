@@ -26,10 +26,12 @@ bool invTrConnected() { return false; }
 bool invTrConnect()   { return false; }
 void invTrSend(const uint8_t*, size_t) { }
 void invBind(const String&) { }
+String invTrReport() { return String(); }
 
 #else
 
 #include "usb/usb_host.h"
+#include <Preferences.h>
 
 static usb_host_client_handle_t s_client = nullptr;
 static usb_device_handle_t      s_dev    = nullptr;
@@ -49,6 +51,57 @@ static portMUX_TYPE     s_txMux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t          s_tx[64];
 static volatile size_t  s_txLen = 0;
 
+// ------------------------------------------------------------------ сеанс
+
+// У инвертора нет ни компьютера, ни сети: всё, что там произошло, должно
+// пережить дорогу домой. Счётчики и последние строки — в NVS, раз в 30 с
+// и на каждом событии. Пишет только задача клиента, не колбэк передачи.
+static Preferences s_nvs;
+static uint32_t    s_opens = 0, s_lines = 0, s_naks = 0, s_lastMs = 0;
+static String      s_lastGood, s_lastNak, s_err;
+static volatile bool s_dirty = false;
+static char        s_line[160];
+static size_t      s_lineLen = 0;
+static String      s_first;                 // первые строки сеанса, как есть
+static uint8_t     s_firstN = 0;
+
+static void logSave() {
+    s_nvs.putUInt("opens", s_opens);
+    s_nvs.putUInt("lines", s_lines);
+    s_nvs.putUInt("naks",  s_naks);
+    s_nvs.putUInt("ms",    s_lastMs);
+    s_nvs.putString("good", s_lastGood);
+    s_nvs.putString("err",  s_err);
+    s_nvs.putString("first", s_first);
+    s_dirty = false;
+}
+
+static void logErr(const char* e) {
+    s_err = e;
+    s_lastMs = millis();
+    Serial.printf("[инв] %s\n", e);
+    logSave();
+}
+
+// Строки собираем здесь, не зная протокола: только чтобы посчитать
+// и запомнить последнюю. Разбор — дело профиля.
+static void logBytes(const uint8_t* d, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (d[i] != '\r') {
+            if (s_lineLen < sizeof(s_line) - 1) s_line[s_lineLen++] = d[i];
+            continue;
+        }
+        s_line[s_lineLen] = 0;
+        s_lines++;
+        s_lastMs = millis();
+        if (s_lineLen >= 3 && !memcmp(s_line, "NAK", 3)) s_naks++;
+        else s_lastGood = s_line;
+        if (s_firstN < 5) { s_firstN++; s_first += "    "; s_first += s_line; s_first += "\n"; }
+        s_lineLen = 0;
+        s_dirty = true;
+    }
+}
+
 // ------------------------------------------------------------------ передачи
 
 static void ctrlCb(usb_transfer_t*) { s_ctrlDone = true; }
@@ -56,8 +109,10 @@ static void outCb(usb_transfer_t*)  { s_outDone = true; }
 
 // Приём крутится сам: кусок пришёл — отдали профилю, заказали следующий.
 static void inCb(usb_transfer_t* t) {
-    if (t->status == USB_TRANSFER_STATUS_COMPLETED && t->actual_num_bytes > 0)
+    if (t->status == USB_TRANSFER_STATUS_COMPLETED && t->actual_num_bytes > 0) {
+        logBytes(t->data_buffer, t->actual_num_bytes);
         invOnBytes(t->data_buffer, t->actual_num_bytes);
+    }
     if (s_inRun && t->status == USB_TRANSFER_STATUS_COMPLETED) usb_host_transfer_submit(t);
     else s_inRun = false;
 }
@@ -174,7 +229,9 @@ static void openDevice(uint8_t addr) {
     s_mps0 = info.bMaxPacketSize0;
 
     if (dd->idVendor != 0x1A86) {
-        Serial.printf("[инв] на USB %04x:%04x — не мост CH34x, не трогаю\n", dd->idVendor, dd->idProduct);
+        char e[64];
+        snprintf(e, sizeof(e), "на USB %04x:%04x — не мост CH34x, не трогаю", dd->idVendor, dd->idProduct);
+        logErr(e);
         usb_host_device_close(s_client, s_dev);
         s_dev = nullptr;
         return;
@@ -198,7 +255,7 @@ static void openDevice(uint8_t addr) {
         }
     }
     if (!s_epIn || !s_epOut || usb_host_interface_claim(s_client, s_dev, s_ifc, 0) != ESP_OK) {
-        Serial.println("[инв] канал данных моста не найден");
+        logErr("канал данных моста не найден");
         usb_host_device_close(s_client, s_dev);
         s_dev = nullptr;
         return;
@@ -208,7 +265,7 @@ static void openDevice(uint8_t addr) {
     usb_host_transfer_alloc(64, 0, &s_out);
     usb_host_transfer_alloc(s_mpsIn > 64 ? s_mpsIn : 64, 0, &s_in);
 
-    if (!bridgeInit()) { Serial.println("[инв] мост не настроился"); closeDevice(); return; }
+    if (!bridgeInit()) { logErr("мост не настроился"); closeDevice(); return; }
 
     s_in->num_bytes = s_mpsIn;
     s_in->device_handle = s_dev;
@@ -218,6 +275,12 @@ static void openDevice(uint8_t addr) {
     if (usb_host_transfer_submit(s_in) != ESP_OK) { s_inRun = false; closeDevice(); return; }
 
     s_ready = true;
+    s_opens++;
+    s_err = "";
+    s_first = "";
+    s_firstN = 0;
+    s_lastMs = millis();
+    logSave();
     Serial.println("[инв] инвертор на USB, опрос пошёл");
 }
 
@@ -239,6 +302,17 @@ static void flushTx() {
 }
 
 // ------------------------------------------------------------------ задачи
+
+static volatile bool s_enumSeen = false;
+static volatile uint16_t s_enumVid = 0, s_enumPid = 0;
+
+static bool enumFilter(const usb_device_desc_t* d, uint8_t* cfgValue) {
+    s_enumVid = d->idVendor;
+    s_enumPid = d->idProduct;
+    s_enumSeen = true;
+    *cfgValue = 1;
+    return true;
+}
 
 static void clientCb(const usb_host_client_event_msg_t* m, void*) {
     if (m->event == USB_HOST_CLIENT_EVENT_NEW_DEV)       s_newAddr = m->new_dev.address;
@@ -266,23 +340,33 @@ static void clientTask(void*) {
         usb_host_client_handle_events(s_client, pdMS_TO_TICKS(10));
         if (s_gone) {
             s_gone = false;
-            Serial.println("[инв] инвертор отключён от USB");
             closeDevice();
+            logErr("инвертор отключён от USB");
         }
         if (s_newAddr) {
             uint8_t a = s_newAddr;
             s_newAddr = 0;
             if (!s_dev) openDevice(a);
         }
+        if (s_enumSeen) {
+            s_enumSeen = false;
+            char e[64];
+            snprintf(e, sizeof(e), "на шине %04x:%04x, открываю", s_enumVid, s_enumPid);
+            logErr(e);
+        }
         if (s_txLen) flushTx();
+        static uint32_t lastSave = 0;
+        if (s_dirty && millis() - lastSave > 30000) { lastSave = millis(); logSave(); }
     }
 }
 
 bool invLooksLikeDongle(const String&, bool) { return false; }   // тут не ищут в эфире
 
 void invTrBegin() {
+    s_nvs.begin("invusb", false);
     usb_host_config_t hc = {};
     hc.intr_flags = ESP_INTR_FLAG_LEVEL1;
+    hc.enum_filter_cb = enumFilter;
     if (usb_host_install(&hc) != ESP_OK) { Serial.println("[инв] USB-хост не поднялся"); return; }
     xTaskCreatePinnedToCore(hostTask,   "usbh",   3072, nullptr, 6, nullptr, 1);
     xTaskCreatePinnedToCore(clientTask, "usbinv", 6144, nullptr, 5, nullptr, 1);
@@ -291,6 +375,24 @@ void invTrBegin() {
 }
 
 bool invTrConnected() { return s_ready; }
+
+String invTrReport() {
+    uint32_t opens = s_nvs.getUInt("opens", 0);
+    if (!opens && !s_nvs.isKey("err")) return String();
+    char b[96];
+    String r;
+    snprintf(b, sizeof(b), "  подключений за всё время: %lu\n", (unsigned long)opens);           r += b;
+    snprintf(b, sizeof(b), "  строк получено: %lu, из них NAK: %lu\n",
+             (unsigned long)s_nvs.getUInt("lines", 0), (unsigned long)s_nvs.getUInt("naks", 0)); r += b;
+    snprintf(b, sizeof(b), "  последнее событие через %lu с после включения\n",
+             (unsigned long)(s_nvs.getUInt("ms", 0) / 1000));                                    r += b;
+    String g = s_nvs.getString("good", ""), e = s_nvs.getString("err", "");
+    r += "  последний ответ: " + (g.length() ? g : String("—")) + "\n";
+    if (e.length()) r += "  чем кончился сеанс: " + e + "\n";
+    String f = s_nvs.getString("first", "");
+    if (f.length()) r += "  первые строки:\n" + f;
+    return r;
+}
 
 bool invTrConnect() { return s_ready; }      // подключение ловит клиент сам, по событию
 

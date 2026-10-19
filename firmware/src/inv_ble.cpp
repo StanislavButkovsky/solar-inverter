@@ -34,6 +34,8 @@ class InvCb : public NimBLEClientCallbacks {
     }
 };
 
+String invTrReport() { return String(); }   // по BLE всё видно вживую на странице
+
 bool invLooksLikeDongle(const String& name, bool hasService) {
     if (hasService) return true;
     // Донглы Eybond рекламируются серийным номером: длинная строка из цифр.

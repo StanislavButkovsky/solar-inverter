@@ -25,8 +25,9 @@ const uint16_t INV_GAP_MS = 10;          // ответ с 5 мс, берём с 
 
 // Номиналы нужны дважды — пересчитать батарею из вольт на элемент и
 // загрузку из процентов в ватты, — а меняться им неоткуда. Поэтому «I»
-// в круге одна на четыре.
-static const char* STEPS[] = { "I", "Q1", "Q1", "Q1" };
+// в круге одна на четыре. Состояние её не ждёт: первая версия спрашивала
+// одну «I», пока та не ответит, и на живом HS35 так и не дошла до Q1.
+static const char* STEPS[] = { "Q1", "Q1", "Q1", "I" };
 const uint8_t INV_NSTEPS = sizeof(STEPS) / sizeof(STEPS[0]);
 
 static float s_ratedV = 0, s_ratedA = 0, s_ratedBattV = 0;
@@ -38,8 +39,6 @@ void invResetStream() { s_len = 0; }
 
 size_t invBuildRequest(uint8_t step, uint8_t* out, size_t cap) {
     const char* cmd = STEPS[step % INV_NSTEPS];
-    // Пока номиналы не пришли, спрашиваем их, а не состояние.
-    if (!s_ratedV) cmd = "I";
     size_t n = strlen(cmd);
     if (n + 1 > cap) return 0;
     memcpy(out, cmd, n);
