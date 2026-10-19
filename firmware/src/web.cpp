@@ -9,6 +9,9 @@
 #include "events.h"
 #include "inv.h"
 #include <WebServer.h>
+#if defined(TARGET_HS35)
+#include "usb_probe.h"
+#endif
 
 // Синхронный сервер, а не асинхронный: опрос раз в секунду он тянет с запасом,
 // зависимостей ноль, и он заметно спокойнее уживается с активным BLE.
@@ -226,6 +229,25 @@ void webStart() {
         simSetEnabled(on);
         server.send(200, "application/json", "{\"ok\":true}");
     });
+
+#if defined(TARGET_HS35)
+    // Отчёт разведки USB. На сборке под Bluetooth ручки нет вовсе, и страница
+    // по ответу 404 понимает, что карточку показывать не нужно.
+    server.on("/api/usb", HTTP_GET, []() {
+        String r = usbProbeReport(), e;
+        e.reserve(r.length() + 64);
+        for (size_t i = 0; i < r.length(); i++) {
+            char c = r[i];
+            if (c == '"' || c == '\\') { e += '\\'; e += c; }
+            else if (c == '\n')        e += "\\n";
+            else if ((uint8_t)c >= 0x20) e += c;
+        }
+        String j = "{\"state\":\"" + String(usbProbeState()) + "\",\"count\":" +
+                   String(usbProbeCount()) + ",\"report\":\"" + e + "\"}";
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", j);
+    });
+#endif
 
     server.onNotFound([]() { server.send(404, "text/plain", "нет такой страницы"); });
 

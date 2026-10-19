@@ -15,6 +15,9 @@
 #include "sim.h"
 #include "button.h"
 #include "events.h"
+#if defined(TARGET_HS35)
+#include "usb_probe.h"
+#endif
 
 static String deviceName() {
     uint8_t mac[6];
@@ -43,6 +46,11 @@ void setup() {
     webStart();
     simStart();
     dalyStart();
+#if defined(TARGET_HS35)
+    // Пока драйвера CH340 нет, USB инвертора обслуживает разведка: она
+    // опознаёт устройство и сохраняет отчёт, чтобы прочитать его потом.
+    usbProbeStart();
+#endif
 
     evAdd(EV_BOOT);
     cliBanner();

@@ -203,6 +203,11 @@ body.light .chip.green { background: #d8f5e4; color: #0f7440; }
 body.light .chip.amber { background: #fdf0d4; color: #8a5a06; }
 body.light .chip.red   { background: #fde1dc; color: #a32c17; }
 body.light .chip.blue  { background: #dce9ff; color: #14479e; }
+
+/* Отчёт разведки USB: моноширинный, переносится, чтобы не было прокрутки вбок. */
+pre.rep { margin: 10px 0 0; padding: 10px; background: #11141b; border-radius: 8px;
+          font: 11px/1.45 Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+body.light pre.rep { background: #f2f4f8; }
 </style>
 </head>
 <body>
@@ -211,6 +216,18 @@ body.light .chip.blue  { background: #dce9ff; color: #14479e; }
 <div id="dash">
 
   <div id="body">
+    <!-- Разведка USB: только на сборках под S3, на остальных ручки нет и карточка скрыта. -->
+    <div class="row hidden" id="usbrow">
+      <div class="col c1"><div class="card">
+        <h2>Разведка USB инвертора <span id="usbchip" class="chip gray">—</span></h2>
+        <div class="sub" id="usbhint">
+          Подключите USB инвертора к плате — она сама опознает устройство, попробует
+          с ним поговорить и сохранит отчёт в памяти. Отчёт переживает отключение питания.
+        </div>
+        <pre class="rep" id="usbrep">—</pre>
+      </div></div>
+    </div>
+
     <div class="row">
       <div class="col c1"><div class="card">
         <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span>
@@ -873,12 +890,33 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- разведка USB */
+// Ручка есть только на сборках под S3. Не ответила с первого раза — значит,
+// её здесь нет, и больше не спрашиваем.
+var usbSeen = false, usbGone = false;
+function usbPoll() {
+  if (usbGone || busyRadio) return;
+  get("/api/usb", function (u) {
+    usbSeen = true;
+    show("usbrow", true);
+    if (u.state === "busy")      chip("usbchip", "amber", "идёт разведка");
+    else if (u.state === "done") chip("usbchip", "green", "готово");
+    else if (u.report)           chip("usbchip", "blue", "сохранённый отчёт");
+    else                         chip("usbchip", "gray", "жду устройство");
+    $("usbrep").innerHTML = u.report
+      ? u.report.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      : "отчёта ещё нет: устройство к USB не подключали";
+  }, function () { if (!usbSeen) usbGone = true; });
+}
+
 applyTheme();
 paint();
 tick();
 events();
+usbPoll();
 setInterval(tick, 1000);
 setInterval(events, 5000);
+setInterval(usbPoll, 3000);
 </script>
 </body>
 </html>

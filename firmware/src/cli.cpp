@@ -6,6 +6,9 @@
 #include "sim.h"
 #include "inv.h"
 #include <WiFi.h>
+#if defined(TARGET_HS35)
+#include "usb_probe.h"
+#endif
 
 static String buf;
 
@@ -30,6 +33,9 @@ static void help() {
         "poll <мс>             пауза между запросами к BMS\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
+#if defined(TARGET_HS35)
+    Serial.println(F("usb                   отчёт разведки USB инвертора"));
+#endif
 }
 
 static void printStatus() {
@@ -78,6 +84,15 @@ static void exec(String line) {
 
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
+#if defined(TARGET_HS35)
+    if (line == "usb") {
+        String r = usbProbeReport();
+        Serial.printf("разведка USB: %s, подключений за всё время %lu\n",
+                      usbProbeState(), (unsigned long)usbProbeCount());
+        Serial.println(r.length() ? r : String("отчёта ещё нет: устройство к USB не подключали"));
+        return;
+    }
+#endif
     if (line == "reboot") { Serial.println("перезагрузка"); delay(200); ESP.restart(); }
     if (line == "factoryreset") {
         cfgFactoryReset();
