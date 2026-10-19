@@ -9,7 +9,7 @@
 #include "events.h"
 #include "inv.h"
 #include <WebServer.h>
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
 
@@ -45,6 +45,7 @@ static String jsonState() {
     j += ",\"i\":"      + String(s.current, 1);
     j += ",\"p\":"      + String(s.power(), 0);
     j += ",\"soc\":"    + String(s.soc, 1);
+    j += ",\"socKnown\":" + String(s.socKnown ? "true" : "false");
     j += ",\"cellCount\":" + String(s.cellCount);
     j += ",\"maxMv\":"  + String(s.cellMaxMv);
     j += ",\"minMv\":"  + String(s.cellMinMv);
@@ -230,8 +231,8 @@ void webStart() {
         server.send(200, "application/json", "{\"ok\":true}");
     });
 
-#if defined(TARGET_HS35)
-    // Отчёт разведки USB. На сборке под Bluetooth ручки нет вовсе, и страница
+#if defined(USB_PROBE)
+    // Отчёт разведки USB. На прочих сборках ручки нет вовсе, и страница
     // по ответу 404 понимает, что карточку показывать не нужно.
     server.on("/api/usb", HTTP_GET, []() {
         String r = usbProbeReport(), e;

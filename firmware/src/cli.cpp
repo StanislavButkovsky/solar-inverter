@@ -6,7 +6,7 @@
 #include "sim.h"
 #include "inv.h"
 #include <WiFi.h>
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
 
@@ -33,7 +33,7 @@ static void help() {
         "poll <мс>             пауза между запросами к BMS\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
     Serial.println(F("usb                   отчёт разведки USB инвертора"));
 #endif
 }
@@ -44,7 +44,12 @@ static void printStatus() {
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
     InvState v = invSnapshot();
     Serial.println("--- инвертор ---");
-    if (cfg().invMac.isEmpty()) Serial.println("  донгл не привязан (inv mac <адрес>)");
+#if defined(TARGET_HS35)
+    bool unbound = false;                // по USB устройство одно, привязка не нужна
+#else
+    bool unbound = cfg().invMac.isEmpty();
+#endif
+    if (unbound) Serial.println("  донгл не привязан (inv mac <адрес>)");
     else {
         Serial.printf("  связь: %s%s\n", v.linked ? "есть" : "нет",
                       v.linked && !v.fresh ? " (данные устарели)" : "");
@@ -84,7 +89,7 @@ static void exec(String line) {
 
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
     if (line == "usb") {
         String r = usbProbeReport();
         Serial.printf("разведка USB: %s, подключений за всё время %lu\n",

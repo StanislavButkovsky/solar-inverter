@@ -22,6 +22,7 @@ struct BmsState {
     float    voltage       = 0;      // В
     float    current       = 0;      // А: + заряд, − разряд
     float    soc           = 0;      // %
+    bool     socKnown      = false;  // false — источник процента не отдаёт (HS35 по USB)
 
     // --- 0x91 ---
     uint16_t cellMaxMv     = 0;

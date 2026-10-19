@@ -1,7 +1,10 @@
 // Профиль второго инвертора: Hiden Control HS35-5648PRO, он же MUST PV18 Pro.
 // Modbus 19200, адрес 4, два банка регистров плюс отдельные адреса батареи.
 // Источник карты: vladyspavlov/esphome-must-inverter, разбор в HIDEN-HS35.md.
-#if defined(TARGET_HS35) && !defined(TARGET_ASTERION)
+// На USB конкретного HS35 этого протокола не оказалось (там Megatec, см.
+// profile_megatec.cpp), но MUST PV18 им говорит — и сам HS35 может им говорить
+// по RS485/RS232, если порт освободится. Поэтому профиль сохранён под флагом.
+#if defined(TARGET_MUST)
 
 #include "profile_modbus.h"
 #include "state.h"
@@ -23,7 +26,9 @@ const uint8_t  INV_NSTEPS = sizeof(INV_BLOCKS) / sizeof(INV_BLOCKS[0]);
 // Мост CH340 прозрачный, никакого префикса перед кадром нет.
 const uint8_t INV_PREFIX[] = { 0 };
 const uint8_t INV_PREFIX_LEN = 0;
-const char*   INV_PROFILE_NAME = "MUST PV18 (HS35)";
+const char*   INV_PROFILE_NAME = "MUST PV18 (Modbus)";
+const uint32_t INV_BAUD   = 19200;
+const uint16_t INV_GAP_MS = 0;
 
 static inline uint16_t be16(const uint8_t* p) { return ((uint16_t)p[0] << 8) | p[1]; }
 
@@ -75,6 +80,7 @@ void invApplyBlock(uint16_t start, const uint8_t* d, uint8_t n) {
             stateUpdate([&](BmsState& b) {
                 b.linked = true; b.fresh = true; b.lastFrameMs = millis();
                 b.soc = R(113);
+                b.socKnown = true;
             });
             break;
         }

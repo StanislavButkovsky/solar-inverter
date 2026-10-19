@@ -8,7 +8,7 @@
 // подключение и ведёт разведку. Все колбэки передач зовутся из
 // usb_host_client_handle_events(), то есть в задаче клиента, поэтому
 // ожидание передачи — это просто обработка событий в цикле с крайним сроком.
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
 
 #include "usb_probe.h"
 #include "modbus.h"

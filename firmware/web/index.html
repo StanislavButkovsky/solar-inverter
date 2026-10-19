@@ -665,8 +665,11 @@ function render(s) {
   show("demo", !!s.sim);
 
   /* --- заряд --- */
-  $("soc").innerHTML = fmt(b.soc, 1);
-  var pct = Math.max(0, Math.min(100, b.soc));
+  // У HS35 по USB процента нет вовсе: прочерк честнее нарисованного нуля,
+  // а под ним — то, что известно, напряжение.
+  var socKnown = b.socKnown !== false;
+  $("soc").innerHTML = socKnown ? fmt(b.soc, 1) : "—";
+  var pct = socKnown ? Math.max(0, Math.min(100, b.soc)) : 0;
   var col = b.soc < 20 ? "#e5573f" : (b.soc < 40 ? "#f0a83c" : "#2ecc71");
   $("socbar").style.width = pct + "%";
   $("socbar").style.background = col;
@@ -675,9 +678,10 @@ function render(s) {
   var kwh = b.remainAh * b.v / 1000;
   $("soccap").innerHTML = b.cellCount
       ? (b.cellCount + "S · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 1) + " А·ч")
-      : "батарея не подключена";
+      : (l.linked && b.v > 0 ? "инвертор не сообщает заряд · батарея " + fmt(b.v, 1) + " В"
+                             : "батарея не подключена");
   // на всякий случай: страница может открыться не с самого верха
-  if (!b.cellCount) $("socbar").style.width = "0%";
+  if (!b.cellCount && !socKnown) $("socbar").style.width = "0%";
 
   /* --- плитки --- */
   // Знак и есть режим: плюс — в батарею, минус — из батареи.

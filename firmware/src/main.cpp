@@ -15,7 +15,7 @@
 #include "sim.h"
 #include "button.h"
 #include "events.h"
-#if defined(TARGET_HS35)
+#if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
 
@@ -46,9 +46,9 @@ void setup() {
     webStart();
     simStart();
     dalyStart();
-#if defined(TARGET_HS35)
-    // Пока драйвера CH340 нет, USB инвертора обслуживает разведка: она
-    // опознаёт устройство и сохраняет отчёт, чтобы прочитать его потом.
+#if defined(USB_PROBE)
+    // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
+    // а разведка — она опознаёт устройство и сохраняет отчёт в NVS.
     usbProbeStart();
 #endif
 

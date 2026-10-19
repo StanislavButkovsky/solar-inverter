@@ -7,6 +7,9 @@
 #include "state.h"
 
 const char* INV_PROFILE_NAME = "Voltronic (Asterion PLUS)";
+// Обычная скорость семейства; на живом Asterion ещё не проверена.
+const uint32_t INV_BAUD   = 2400;
+const uint16_t INV_GAP_MS = 0;
 
 // Круг опроса: показания, режим, предупреждения. Показания спрашиваются
 // вдвое чаще прочего — они и есть то, что видно на экране.
@@ -53,6 +56,7 @@ static void applyQpigs(const VtQpigs& q) {
         b.linked = true; b.fresh = true; b.lastFrameMs = millis();
         b.voltage = q.battV;
         b.soc     = q.battSoc;
+        b.socKnown = true;
         b.current = q.battChargeA ? (float)q.battChargeA : -(float)q.battDischargeA;
     });
 }

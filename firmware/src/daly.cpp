@@ -64,6 +64,7 @@ void dalyParseFrame(const uint8_t* f) {
             s.voltage = be16(d + 0) * 0.1f;
             s.current = ((int32_t)be16(d + 4) - 30000) * 0.1f;
             s.soc     = be16(d + 6) * 0.1f;
+            s.socKnown = true;
             break;
 
         case 0x91:  // максимальная и минимальная ячейка

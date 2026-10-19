@@ -1,7 +1,7 @@
 // Общая часть профилей на Modbus: собрать запрос блока, склеить ответ,
-// отдать разбор самому профилю. Компилируется для обоих инверторов
-// на Modbus и не участвует в сборке под Voltronic.
-#if !defined(TARGET_ASTERION)
+// отдать разбор самому профилю. Компилируется для профилей на Modbus —
+// Eybond первого инвертора и MUST под флагом TARGET_MUST.
+#if !defined(TARGET_HS35) || defined(TARGET_MUST)
 
 #include "profile_modbus.h"
 

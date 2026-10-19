@@ -10,7 +10,9 @@
 //
 // Реализации выбираются на сборке:
 //   profile_eybond.cpp    первый инвертор, Modbus через донгл Eybond
-//   profile_must.cpp      второй, Hiden HS35 = MUST PV18, Modbus по USB
+//   profile_megatec.cpp   второй, Hiden HS35: по USB — Megatec Q1, как у ИБП
+//   profile_must.cpp      MUST PV18 по Modbus — для HS35 через RS485/RS232,
+//                         если порт освободится (флаг TARGET_MUST)
 //   profile_voltronic.cpp третий, Asterion PLUS = Voltronic Axpert, ASCII
 #pragma once
 #include <Arduino.h>
@@ -26,3 +28,8 @@ bool   invFeed(uint8_t step, const uint8_t* data, size_t n);
 
 // Сбросить накопленное: перед новым запросом и при обрыве связи.
 void   invResetStream();
+
+// Параметры провода — только у профилей по USB (inv_usb.cpp). Пауза между
+// байтами нужна HS35: целую строку подряд его порт не принимает, отвечает NAK.
+extern const uint32_t INV_BAUD;
+extern const uint16_t INV_GAP_MS;

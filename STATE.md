@@ -20,7 +20,7 @@ ESP32-S3 и драйвера USB-хоста.
 | # | Инвертор | Как читаем | Протокол | Состояние |
 |---|---|---|---|---|
 | 1 | **SD-HYM-4862HWP** | Bluetooth через донгл Eybond | Modbus RTU 9600, адрес 1 | **работает**, ждёт привязки донгла |
-| 2 | **Hiden Control HS35-5648PRO** (= MUST PV18 Pro) | USB через мост CH340 | Modbus RTU 19200, адрес 4 | код готов, нужен драйвер USB |
+| 2 | **Hiden Control HS35-5648PRO** | USB через мост CH340 | Megatec Q1, 9600, побайтно (не Modbus — разведка 19.10.2026) | опрос написан, ждёт проверки у инвертора |
 | 3 | **ASTERION PLUS 5.6K** (= Voltronic Axpert VM) | USB | текстовый: `QPIGS`, `QMOD`, `QPIWS` | код готов, нужен драйвер USB |
 
 Батарея первого — **DALY Smart BMS 14S NMC**, читается отдельно по Bluetooth.
