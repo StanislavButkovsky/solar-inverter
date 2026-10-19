@@ -10,7 +10,7 @@
 //
 // Реализации выбираются на сборке:
 //   profile_eybond.cpp    первый инвертор, Modbus через донгл Eybond
-//   profile_megatec.cpp   второй, Hiden HS35: по USB — Megatec Q1, как у ИБП
+//   profile_hs35.cpp      второй, Hiden HS35 по USB: JsdSolar G-ASCII, запасной — Q1
 //   profile_must.cpp      MUST PV18 по Modbus — для HS35 через RS485/RS232,
 //                         если порт освободится (флаг TARGET_MUST)
 //   profile_voltronic.cpp третий, Asterion PLUS = Voltronic Axpert, ASCII
@@ -33,3 +33,7 @@ void   invResetStream();
 // байтами нужна HS35: целую строку подряд его порт не принимает, отвечает NAK.
 extern const uint32_t INV_BAUD;
 extern const uint16_t INV_GAP_MS;
+
+// Что профиль узнал о своём инверторе — для status в терминале. Профилю,
+// которому сказать нечего, определять не нужно: пустая версия в inv.cpp.
+String invProfileReport();

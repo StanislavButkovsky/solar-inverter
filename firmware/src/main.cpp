@@ -15,6 +15,7 @@
 #include "sim.h"
 #include "button.h"
 #include "events.h"
+#include "stats.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -46,6 +47,7 @@ void setup() {
     webStart();
     simStart();
     dalyStart();
+    statsStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
     // а разведка — она опознаёт устройство и сохраняет отчёт в NVS.
@@ -63,5 +65,6 @@ void loop() {
     cliLoop();
     buttonLoop();
     evWatchLoop();
+    statsLoop();
     delay(2);
 }

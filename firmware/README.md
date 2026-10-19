@@ -344,7 +344,8 @@ iOS 12, Safari 12), а он рисует и SVG, и CSS-анимации без 
 | `modbus.h/.cpp` | Modbus RTU: контрольная сумма, запрос, склейка ответа из кусков |
 | `profile.h` | что такое профиль инвертора: какие блоки читать и как их разложить |
 | `profile_eybond.cpp` | профиль первого инвертора (донгл Eybond, Modbus 9600, адрес 1) |
-| `profile_megatec.cpp` | профиль второго (Hiden HS35 по USB: Megatec Q1, 9600, побайтно) |
+| `profile_hs35.cpp` | профиль второго (Hiden HS35 по USB, 9600, побайтно): G-ASCII JsdSolar, запасной — Megatec Q1 |
+| `stats.h/.cpp` | статистика за год в LittleFS: энергии, отключения сети, крайние значения |
 | `profile_must.cpp` | MUST PV18 по Modbus 19200, адрес 4 — под флагом `TARGET_MUST` |
 | `profile_modbus.h/.cpp` | общая часть профилей на Modbus: запрос блока и склейка ответа |
 | `profile_voltronic.cpp` | профиль третьего (Asterion PLUS = Voltronic, текстовый протокол) |

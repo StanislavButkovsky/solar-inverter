@@ -6,6 +6,8 @@
 #include "sim.h"
 #include "inv.h"
 #include "inv_transport.h"
+#include "profile.h"
+#include "stats.h"
 #include <WiFi.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -32,6 +34,8 @@ static void help() {
         "ble release <мин>     отпустить батарею официальному приложению\n"
         "sim on|off            демо-данные для показа интерфейса без батареи\n"
         "poll <мс>             пауза между запросами к BMS\n"
+        "stats [day|week|month|year]  статистика в JSON, как отдаёт /api/stats\n"
+        "time <unix-время>     задать время, если NTP недоступен\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
 #if defined(USB_PROBE)
@@ -51,6 +55,8 @@ static void printStatus() {
     bool unbound = cfg().invMac.isEmpty();
 #endif
     if (unbound) Serial.println("  донгл не привязан (inv mac <адрес>)");
+    String prof = invProfileReport();
+    if (prof.length()) { Serial.println("  что умеет инвертор:"); Serial.print(prof); }
     String trlog = invTrReport();
     if (trlog.length()) { Serial.println("  сохранённый сеанс:"); Serial.print(trlog); }
     else {
@@ -92,6 +98,18 @@ static void exec(String line) {
 
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
+    if (line == "stats" || line.startsWith("stats ")) {
+        String r = line.length() > 6 ? line.substring(6) : String("day");
+        r.trim();
+        Serial.println(statsJson(r));
+        Serial.println(outagesJson(10));
+        return;
+    }
+    if (line.startsWith("time ")) {
+        statsSetTime((uint32_t)strtoul(line.substring(5).c_str(), nullptr, 10));
+        Serial.println(statsTimeValid() ? "время есть" : "время не принято");
+        return;
+    }
 #if defined(USB_PROBE)
     if (line == "usb") {
         String r = usbProbeReport();

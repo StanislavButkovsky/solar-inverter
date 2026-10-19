@@ -18,6 +18,8 @@ static uint8_t     s_step = 0;
 static uint32_t    s_lastPoll = 0, s_lastTry = 0;
 static bool        s_wasConnected = false;
 
+__attribute__((weak)) String invProfileReport() { return String(); }
+
 void invOnBytes(const uint8_t* data, size_t n) {
     // Профиль сам решает, собрался ли ответ: у Modbus это длина и контрольная
     // сумма, у Voltronic — возврат каретки в конце строки.

@@ -8,6 +8,7 @@
 #include "sim.h"
 #include "events.h"
 #include "inv.h"
+#include "stats.h"
 #include <WebServer.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -249,6 +250,29 @@ void webStart() {
         server.send(200, "application/json; charset=utf-8", j);
     });
 #endif
+
+    // Статистика: day | week | month | year. Месяцы собираются из дней на лету.
+    server.on("/api/stats", HTTP_GET, []() {
+        String r = server.hasArg("range") ? server.arg("range") : String("day");
+        if (r != "day" && r != "week" && r != "month" && r != "year") r = "day";
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", statsJson(r));
+    });
+
+    server.on("/api/outages", HTTP_GET, []() {
+        uint16_t n = server.hasArg("n") ? server.arg("n").toInt() : 30;
+        if (n < 1) n = 1;
+        if (n > 200) n = 200;
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", outagesJson(n));
+    });
+
+    // Время с телефона — когда у модуля нет интернета и NTP молчит. Своё,
+    // если оно уже есть, этим не перебивается.
+    server.on("/api/time", HTTP_GET, []() {
+        if (server.hasArg("t")) statsSetTime((uint32_t)strtoul(server.arg("t").c_str(), nullptr, 10));
+        server.send(200, "application/json", String("{\"valid\":") + (statsTimeValid() ? "true" : "false") + "}");
+    });
 
     server.onNotFound([]() { server.send(404, "text/plain", "нет такой страницы"); });
 

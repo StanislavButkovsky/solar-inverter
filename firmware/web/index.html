@@ -204,6 +204,25 @@ body.light .chip.amber { background: #fdf0d4; color: #8a5a06; }
 body.light .chip.red   { background: #fde1dc; color: #a32c17; }
 body.light .chip.blue  { background: #dce9ff; color: #14479e; }
 
+/* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
+.tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
+.tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+svg.bars { display: block; width: 100%; height: 170px; }
+svg.bars .bar { fill: #4f8fe6; }
+svg.bars .bar.sel { fill: #8fbaf5; }
+svg.bars .hit { fill: transparent; }
+svg.bars .ax { fill: #8a93a5; font-size: 10px; }
+svg.bars .gl { stroke: #262c38; stroke-width: 1; }
+#st_tip { min-height: 18px; margin: 6px 0 2px; font-size: 13px; color: #eef1f6; }
+table.st { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+table.st td { padding: 4px 0; border-bottom: 1px solid #232a36; }
+table.st td + td { text-align: right; }
+body.light svg.bars .bar { fill: #2a6fd6; }
+body.light svg.bars .bar.sel { fill: #7aa7ea; }
+body.light svg.bars .gl { stroke: #e7ebf2; }
+body.light #st_tip { color: #1d2433; }
+body.light table.st td { border-color: #e7ebf2; }
+
 /* Отчёт разведки USB: моноширинный, переносится, чтобы не было прокрутки вбок. */
 pre.rep { margin: 10px 0 0; padding: 10px; background: #11141b; border-radius: 8px;
           font: 11px/1.45 Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
@@ -338,9 +357,73 @@ body.light pre.rep { background: #f2f4f8; }
     </div>
 
     <div class="row" style="margin-top:10px">
-      <div class="col c1"><button class="wide" onclick="showSettings()">Настройки</button></div>
+      <div class="col c4"><button class="wide" onclick="showStats()">Статистика</button></div>
+      <div class="col c4"><button class="wide" onclick="showSettings()">Настройки</button></div>
     </div>
   </div>
+</div>
+
+<!-- ============================ СТАТИСТИКА ============================ -->
+<div id="stats" class="hidden">
+  <div class="row" style="margin-top:12px">
+    <div class="col c1"><button onclick="showDash()">← К показаниям</button></div>
+  </div>
+
+  <div class="row hidden" id="st_notime"><div class="col c1"><div class="card note">
+    У модуля нет точного времени: интернета нет, NTP молчит. Время берётся
+    с этого телефона при открытии страницы — обновите её. Пока его нет,
+    накопленное хранится в памяти и уйдёт в сегодняшний день.
+  </div></div></div>
+
+  <div class="row"><div class="col c1"><div class="card">
+    <div class="tabs" id="st_range">
+      <button onclick="stRange('day')"   id="sr_day">День</button><button
+              onclick="stRange('week')"  id="sr_week">Неделя</button><button
+              onclick="stRange('month')" id="sr_month">Месяц</button><button
+              onclick="stRange('year')"  id="sr_year">Год</button>
+    </div>
+    <table class="kv">
+      <tr><td>Из сети</td><td id="st_g">—</td></tr>
+      <tr><td>Нагрузка</td><td id="st_l">—</td></tr>
+      <tr><td>Нагрузка от батареи</td><td id="st_b">—</td></tr>
+      <tr><td>Солнечные панели</td><td id="st_p">—</td></tr>
+      <tr><td>Без сети</td><td id="st_o">—</td></tr>
+      <tr><td>Данные были</td><td id="st_d">—</td></tr>
+    </table>
+    <div class="sub" style="margin-top:8px">
+      ≈ — оценка: инвертор по USB сообщает загрузку в процентах, мощность
+      считается через номинал и выходит полной (ВА), а не активной.
+    </div>
+  </div></div></div>
+
+  <div class="row"><div class="col c1"><div class="card">
+    <h2 id="st_title">График</h2>
+    <div class="tabs" id="st_metric">
+      <button onclick="stMetric('g')" id="sm_g">Сеть</button><button
+              onclick="stMetric('l')" id="sm_l">Нагрузка</button><button
+              onclick="stMetric('b')" id="sm_b">Батарея</button><button
+              onclick="stMetric('p')" id="sm_p">Солнце</button><button
+              onclick="stMetric('o')" id="sm_o">Без сети</button>
+    </div>
+    <div id="st_tip" class="sub">нажмите на столбик</div>
+    <svg class="bars" id="st_svg" viewBox="0 0 400 170" preserveAspectRatio="none"></svg>
+    <table class="st" id="st_table"></table>
+  </div></div></div>
+
+  <div class="row"><div class="col c1"><div class="card">
+    <h2>Крайние значения</h2>
+    <table class="kv">
+      <tr><td>Сеть, мин. … макс.</td><td id="st_gv">—</td></tr>
+      <tr><td>Батарея, мин. … макс.</td><td id="st_bv">—</td></tr>
+      <tr><td>Температура, макс.</td><td id="st_t">—</td></tr>
+      <tr><td>Загрузка, макс.</td><td id="st_lm">—</td></tr>
+    </table>
+  </div></div></div>
+
+  <div class="row"><div class="col c1"><div class="card">
+    <h2>Отключения сети</h2>
+    <div id="st_out"><div class="sub">пока не было</div></div>
+  </div></div></div>
 </div>
 
 <!-- ============================ НАСТРОЙКИ ============================ -->
@@ -552,11 +635,12 @@ function get(url, cb, onFail) {
 }
 
 /* ----------------------------------------- переключение экранов */
-var onSettings = false;
-function showSettings() { onSettings = true;  paint(); }
-function showDash()     { onSettings = false; paint(); }
+var onSettings = false, onStats = false;
+function showSettings() { onSettings = true;  onStats = false; paint(); }
+function showStats()    { onSettings = false; onStats = true;  paint(); stLoad(); }
+function showDash()     { onSettings = false; onStats = false; paint(); }
 function paint() {
-  show("dash", !onSettings); show("settings", onSettings);
+  show("dash", !onSettings && !onStats); show("settings", onSettings); show("stats", onStats);
   window.scrollTo(0, 0);
 }
 
@@ -894,6 +978,124 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- статистика */
+var stR = "day", stM = "l", stData = null, stSel = -1;
+var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+function kwh(wh) {
+  if (!wh) return "0";
+  var k = wh / 1000;
+  return k >= 100 ? k.toFixed(0) : (k >= 10 ? k.toFixed(1) : k.toFixed(2));
+}
+function dur(sec) {
+  if (!sec) return "0 мин";
+  var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? (h + " ч " + m + " мин") : (m + " мин");
+}
+function two(n) { return (n < 10 ? "0" : "") + n; }
+// Сутки и месяцы приходят числами от 1970 года по местному времени модуля;
+// UTC-разбор такого числа и даёт местную дату.
+function barLabel(t, short) {
+  if (stR === "day") return short ? String(t) : (two(t) + ":00");
+  if (stR === "year") return MON[t % 12] + (short ? "" : " " + Math.floor(t / 12));
+  var d = new Date(t * 86400000);
+  return short ? String(d.getUTCDate()) : (two(d.getUTCDate()) + "." + two(d.getUTCMonth() + 1));
+}
+function metricVal(b) { return stM === "o" ? b.o : b[stM]; }
+function metricText(v) { return stM === "o" ? dur(v) : ("≈ " + kwh(v) + " кВт·ч"); }
+
+function stRange(r) { stR = r; stSel = -1; stLoad(); }
+function stMetric(m) { stM = m; stSel = -1; stDraw(); }
+
+function stLoad() {
+  var ids = ["day", "week", "month", "year"];
+  for (var i = 0; i < ids.length; i++) $("sr_" + ids[i]).className = ids[i] === stR ? "on" : "";
+  get("/api/stats?range=" + stR, function (s) { stData = s; stShow(); });
+  get("/api/outages?n=20", stOutages);
+}
+
+function stShow() {
+  var s = stData;
+  show("st_notime", !s.valid);
+  var t = s.tot;
+  $("st_g").innerHTML = "≈ " + kwh(t.g) + " кВт·ч";
+  $("st_l").innerHTML = "≈ " + kwh(t.l) + " кВт·ч";
+  $("st_b").innerHTML = "≈ " + kwh(t.b) + " кВт·ч";
+  $("st_p").innerHTML = t.p ? (kwh(t.p) + " кВт·ч") : "нет данных";
+  $("st_o").innerHTML = dur(t.o) + (t.n ? " · " + t.n + " раз" : "") + (s.inOutage ? " · сейчас нет" : "");
+  $("st_d").innerHTML = s.valid && s.bars ? dur(t.d) : "—";
+  $("st_gv").innerHTML = t.gvmax ? (t.gvmin.toFixed(1) + " … " + t.gvmax.toFixed(1) + " В") : "—";
+  $("st_bv").innerHTML = t.bvmax ? (t.bvmin.toFixed(1) + " … " + t.bvmax.toFixed(1) + " В") : "—";
+  $("st_t").innerHTML  = t.tmax ? (t.tmax + " °C") : "—";
+  $("st_lm").innerHTML = t.lmax ? (t.lmax + " %") : "—";
+  stDraw();
+}
+
+// Один ряд — одна метрика: без легенды, одним тоном, подпись — в заголовке.
+function stDraw() {
+  var ms = ["g", "l", "b", "p", "o"];
+  for (var i = 0; i < ms.length; i++) $("sm_" + ms[i]).className = ms[i] === stM ? "on" : "";
+  var names = { g: "Из сети", l: "Нагрузка", b: "Нагрузка от батареи", p: "Солнечные панели", o: "Без сети" };
+  var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
+  $("st_title").innerHTML = names[stM] + ", " + per;
+  var svg = $("st_svg");
+  var s = stData;
+  if (!s || !s.bars) { svg.innerHTML = ""; $("st_table").innerHTML = ""; return; }
+  var bars = s.bars, n = bars.length, max = 0;
+  for (var k = 0; k < n; k++) if (metricVal(bars[k]) > max) max = metricVal(bars[k]);
+  var W = 400, H = 170, top = 8, bottom = 18, plot = H - top - bottom;
+  var slot = W / n, gap = Math.min(2, slot * 0.2), bw = slot - gap;
+  var h = '<line class="gl" x1="0" x2="' + W + '" y1="' + (top + plot) + '" y2="' + (top + plot) + '"/>';
+  for (var j = 0; j < n; j++) {
+    var v = metricVal(bars[j]);
+    var bh = max ? Math.max(v ? 2 : 0, plot * v / max) : 0;
+    var x = j * slot + gap / 2, y = top + plot - bh;
+    var r = Math.min(4, bw / 2, bh);
+    // Скруглены только верхние углы: низ стоит на оси.
+    if (bh > 0)
+      h += '<path class="bar' + (j === stSel ? " sel" : "") + '" d="M' + x + ',' + (top + plot) +
+           'V' + (y + r) + 'Q' + x + ',' + y + ' ' + (x + r) + ',' + y +
+           'H' + (x + bw - r) + 'Q' + (x + bw) + ',' + y + ' ' + (x + bw) + ',' + (y + r) +
+           'V' + (top + plot) + 'Z"/>';
+    // Подписи оси — не под каждым столбиком, а через равный шаг.
+    var step = n > 12 ? Math.ceil(n / 8) : 1;
+    if (j % step === 0)
+      h += '<text class="ax" x="' + (x + bw / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + barLabel(bars[j].t, true) + '</text>';
+    h += '<rect class="hit" x="' + (j * slot) + '" y="0" width="' + slot + '" height="' + H + '" onclick="stPick(' + j + ')"/>';
+  }
+  svg.innerHTML = h;
+  $("st_tip").innerHTML = stSel >= 0 ? stTip(bars[stSel]) : (max ? "нажмите на столбик" : "за этот период пока пусто");
+
+  // Таблица — тот же ряд числами, для тех, кому столбики не помогают.
+  var rows = "";
+  for (var q = n - 1; q >= 0; q--) {
+    if (!bars[q].d && !metricVal(bars[q])) continue;
+    rows += "<tr><td>" + barLabel(bars[q].t, false) + "</td><td>" + metricText(metricVal(bars[q])) + "</td></tr>";
+  }
+  $("st_table").innerHTML = rows;
+}
+
+function stTip(b) {
+  var cover = b.d ? " · данные " + dur(b.d) : " · данных не было";
+  return "<b>" + barLabel(b.t, false) + "</b> — " + metricText(metricVal(b)) +
+         (b.n ? " · отключений " + b.n : "") + cover;
+}
+function stPick(j) { stSel = j; stDraw(); }
+
+function stOutages(list) {
+  if (!list.length) { $("st_out").innerHTML = '<div class="sub">пока не было</div>'; return; }
+  var h = "";
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i], a = new Date(o.s * 1000), e = new Date(o.e * 1000);
+    var when = two(a.getDate()) + "." + two(a.getMonth() + 1) + " " + two(a.getHours()) + ":" + two(a.getMinutes());
+    var till = o.open ? "идёт" : (two(e.getHours()) + ":" + two(e.getMinutes()));
+    h += '<div class="ev"><span class="tm">' + when + '</span>' +
+         '<b style="background:' + (o.open ? EVCOL.alarm : EVCOL.warn) + '"></b>' +
+         "до " + till + ' <span class="sub">' + dur(o.e - o.s) + "</span></div>";
+  }
+  $("st_out").innerHTML = h;
+}
+
 /* ----------------------------------------- разведка USB */
 // Ручка есть только на сборках под S3. Не ответила с первого раза — значит,
 // её здесь нет, и больше не спрашиваем.
@@ -913,6 +1115,10 @@ function usbPoll() {
   }, function () { if (!usbSeen) usbGone = true; });
 }
 
+// Время — модулю, если у него нет своего: без него статистика не знает,
+// какой сегодня день. Своё, полученное по NTP, этим не перебивается.
+get("/api/time?t=" + Math.floor(new Date().getTime() / 1000), function () {});
+
 applyTheme();
 paint();
 tick();
@@ -921,6 +1127,8 @@ usbPoll();
 setInterval(tick, 1000);
 setInterval(events, 5000);
 setInterval(usbPoll, 3000);
+// На экране статистики — свежие цифры раз в полминуты, остальное время не дёргаем.
+setInterval(function () { if (onStats && !busyRadio) stLoad(); }, 30000);
 </script>
 </body>
 </html>

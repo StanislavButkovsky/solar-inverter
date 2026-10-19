@@ -383,6 +383,14 @@ static void dalyTask(void*) {
         }
 
         if (!s_connected) {
+#if defined(TARGET_HS35)
+            // У HS35 батарея штатная и говорит через инвертор; своей BMS с
+            // Bluetooth может не быть вовсе. Искать её вслепую — значит каждые
+            // 5 с на 5 с занимать и радио, и эту задачу, из которой опрашивается
+            // инвертор: на живой плате опрос шёл раз в 5 с вместо 2, а Wi-Fi
+            // падал на совместной работе радио. Ищем, только если привязана.
+            if (cfg().bmsMac.isEmpty()) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+#endif
             if (millis() - lastTry > 5000) {
                 lastTry = millis();
                 if (findTarget(5)) {
