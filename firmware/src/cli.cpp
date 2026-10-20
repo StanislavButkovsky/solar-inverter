@@ -8,6 +8,7 @@
 #include "inv_transport.h"
 #include "profile.h"
 #include "stats.h"
+#include "rtc.h"
 #include <WiFi.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -48,6 +49,17 @@ static void printStatus() {
     BmsState s = stateSnapshot();
     Serial.println("--- сеть ---");
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
+    Serial.println("--- время ---");
+    if (statsTimeValid()) {
+        time_t loc = time(nullptr) + 3 * 3600;
+        struct tm lt;
+        gmtime_r(&loc, &lt);
+        Serial.printf("  %02d.%02d.%04d %02d:%02d (UTC+3)\n", lt.tm_mday, lt.tm_mon + 1,
+                      lt.tm_year + 1900, lt.tm_hour, lt.tm_min);
+    } else {
+        Serial.println("  неизвестно: нет ни NTP, ни часов, ни телефона");
+    }
+    Serial.printf("  %s\n", rtcStatus().c_str());
     InvState v = invSnapshot();
     Serial.println("--- инвертор ---");
 #if defined(TARGET_HS35)

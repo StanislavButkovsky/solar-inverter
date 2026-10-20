@@ -16,6 +16,7 @@
 #include "button.h"
 #include "events.h"
 #include "stats.h"
+#include "rtc.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -47,6 +48,7 @@ void setup() {
     webStart();
     simStart();
     dalyStart();
+    rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
     statsStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
@@ -66,5 +68,6 @@ void loop() {
     buttonLoop();
     evWatchLoop();
     statsLoop();
+    rtcLoop();
     delay(2);
 }

@@ -4,6 +4,7 @@
 // statsLoop(), читают обработчики HTTP — гонок нет, мьютекс не нужен.
 #include "stats.h"
 #include "state.h"
+#include "rtc.h"
 #include <LittleFS.h>
 #include <sys/time.h>
 #include <time.h>
@@ -95,6 +96,7 @@ void statsSetTime(uint32_t epoch) {
     if (statsTimeValid() || epoch < 1700000000) return;
     struct timeval tv = { (time_t)epoch, 0 };
     settimeofday(&tv, nullptr);
+    rtcTimeSetExternally();               // и в модуль часов, если он есть
     Serial.println("[стат] время взято из браузера");
 }
 
