@@ -379,6 +379,24 @@ body.light pre.rep { background: #f2f4f8; }
       </div></div>
     </div>
 
+    <!-- Частота обновления: своя у каждого браузера, как тема. -->
+    <div class="row"><div class="col c1"><div class="card">
+      <h2>Обновление данных</h2>
+      <div class="tabs" id="rf">
+        <button onclick="setRefresh(1)"  id="rf_1">1 с</button><button
+                onclick="setRefresh(2)"  id="rf_2">2 с</button><button
+                onclick="setRefresh(5)"  id="rf_5">5 с</button><button
+                onclick="setRefresh(10)" id="rf_10">10 с</button><button
+                onclick="setRefresh(30)" id="rf_30">30 с</button>
+      </div>
+      <div class="sub">
+        Как часто страница спрашивает модуль. Инвертор модуль опрашивает примерно
+        раз в 2 с, так что чаще новые цифры инвертора не появятся; 1 с полезна
+        для батареи DALY. Реже — меньше нагрузка на радио модуля и батарею телефона.
+        Выбор хранится в этом браузере.
+      </div>
+    </div></div></div>
+
     <div class="row" style="margin-top:10px">
       <div class="col c4"><button class="wide" onclick="showStats()">Статистика</button></div>
       <div class="col c4"><button class="wide" onclick="showSettings()">Настройки</button></div>
@@ -565,7 +583,7 @@ body.light pre.rep { background: #f2f4f8; }
   </div>
 </div>
 
-<div class="foot">Обновление раз в секунду. Данные с DALY BMS по Bluetooth LE.</div>
+<div class="foot" id="foot">Обновление раз в секунду.</div>
 
 <script>
 function $(id) { return document.getElementById(id); }
@@ -1014,6 +1032,24 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- частота обновления */
+var refreshS = 1, refreshTimer = null;
+try { var rs = parseInt(localStorage.getItem("refresh"), 10); if (rs > 0) refreshS = rs; } catch (e) { }
+
+function startRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(tick, refreshS * 1000);
+  var ids = [1, 2, 5, 10, 30];
+  for (var i = 0; i < ids.length; i++) $("rf_" + ids[i]).className = ids[i] === refreshS ? "on" : "";
+  $("foot").innerHTML = refreshS === 1 ? "Обновление раз в секунду." : "Обновление раз в " + refreshS + " с.";
+}
+function setRefresh(sec) {
+  refreshS = sec;
+  try { localStorage.setItem("refresh", String(sec)); } catch (e) { }
+  startRefresh();
+  tick();                                 // сразу, не дожидаясь нового интервала
+}
+
 /* ----------------------------------------- статистика */
 var stR = "day", stM = "l", stData = null, stSel = -1;
 var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -1160,7 +1196,7 @@ paint();
 tick();
 events();
 usbPoll();
-setInterval(tick, 1000);
+startRefresh();
 setInterval(events, 5000);
 setInterval(usbPoll, 3000);
 // На экране статистики — свежие цифры раз в полминуты, остальное время не дёргаем.
