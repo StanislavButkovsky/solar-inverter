@@ -692,7 +692,7 @@ function renderInv(v, b) {
   var pvOn   = live && v.pvW > 20;
   var gridOn = live && v.grid && (v.mode === 2 || v.mode === 4);
   var loadOn = live && v.outW > 10;
-  var chg    = live && v.chgW > 20;
+  var chg    = live && (v.chgW > 20 || b.i > 1);   // ток со знаком есть не у всех
   var dsg    = live && b.i < -1;
 
   if (!live)        chip("gridchip", "gray", "сеть —");
@@ -720,7 +720,8 @@ function renderInv(v, b) {
   nv("n_pv",   live ? w(v.pvW) : "—", !pvOn);
   nv("n_grid", live ? (v.grid ? w(v.gridW) : "нет") : "—", !gridOn);
   nv("n_load", live ? w(v.outW) : "—", !loadOn);
-  nv("n_batt", b.cellCount ? w(Math.abs(b.p)) : "—", !(chg || dsg),
+  // У HS35 ячеек нет, но ток и напряжение батареи приходят от инвертора.
+  nv("n_batt", (b.cellCount || b.socKnown) ? w(Math.abs(b.p)) : "—", !(chg || dsg),
      chg ? "#2ecc71" : (dsg ? "#f0a83c" : ""));
   nv("n_inv",  live ? (v.outV.toFixed(0) + " В") : "—", !live);
 
@@ -762,8 +763,11 @@ function render(s) {
   var kwh = b.remainAh * b.v / 1000;
   $("soccap").innerHTML = b.cellCount
       ? (b.cellCount + "S · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 1) + " А·ч")
-      : (l.linked && b.v > 0 ? "инвертор не сообщает заряд · батарея " + fmt(b.v, 1) + " В"
-                             : "батарея не подключена");
+      : (l.linked && b.v > 0
+          ? (socKnown ? "по данным инвертора · " + fmt(b.v, 1) + " В" +
+                        (b.remainAh ? " · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 0) + " А·ч" : "")
+                      : "инвертор не сообщает заряд · батарея " + fmt(b.v, 1) + " В")
+          : "батарея не подключена");
   // на всякий случай: страница может открыться не с самого верха
   if (!b.cellCount && !socKnown) $("socbar").style.width = "0%";
 
