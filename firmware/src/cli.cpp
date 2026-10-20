@@ -35,6 +35,7 @@ static void help() {
         "sim on|off            демо-данные для показа интерфейса без батареи\n"
         "poll <мс>             пауза между запросами к BMS\n"
         "stats [day|week|month|year]  статистика в JSON, как отдаёт /api/stats\n"
+        "stats clear           стереть всю статистику\n"
         "time <unix-время>     задать время, если NTP недоступен\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
@@ -98,6 +99,7 @@ static void exec(String line) {
 
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
+    if (line == "stats clear") { statsClear(); return; }
     if (line == "stats" || line.startsWith("stats ")) {
         String r = line.length() > 6 ? line.substring(6) : String("day");
         r.trim();

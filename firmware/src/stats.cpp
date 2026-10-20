@@ -67,6 +67,13 @@ static float viaCounter(double now, double& last, float watts, float k) {
     return wh;
 }
 
+// Отключение засчитывается, только если сети нет дольше OUT_CONFIRM_MS
+// подряд, — и тогда задним числом, с первого показания. 20.10.2026 сбойный
+// разбор (ответ батареи 49,1 В принимался за напряжение сети) дал десятки
+// «отключений», которых не было; одно ложное показание больше их не делает.
+static const uint32_t OUT_CONFIRM_MS = 10000;
+static uint32_t s_lossSince = 0;         // millis() первого показания «сети нет»
+
 static bool     s_inOut = false;
 static uint32_t s_outStartMs = 0;
 static int32_t  s_outSlot = -1;                       // ячейка текущего отключения в файле
@@ -220,14 +227,17 @@ static void rollover() {
     }
 }
 
-static void outageStart(DayRec& D) {
+static void outageStart(DayRec& D, HourRec& H) {
     s_inOut = true;
-    s_outStartMs = millis();
+    s_outStartMs = s_lossSince;          // задним числом — с первого показания
     s_outSlot = -1;
     D.outages++;
+    uint32_t back = (millis() - s_lossSince) / 1000;
+    D.outageS += back;
+    H.outageS += back;
     if (s_bound) {
         uint32_t now = (uint32_t)time(nullptr);
-        OutRec r = { now, now, 1, {0} };
+        OutRec r = { now - back, now, 1, {0} };
         s_outSlot = outAppend(r);
     }
 }
@@ -291,11 +301,16 @@ void statsLoop() {
         // Отключение считаем только по живым данным: пока связи с
         // инвертором нет, неизвестно, есть ли сеть, и счётчик стоит.
         if (!v.gridOn) {
-            D.outageS += whole;
-            H.outageS += whole;
-            if (!s_inOut) outageStart(D);
-        } else if (s_inOut) {
-            outageEnd();
+            if (!s_lossSince) s_lossSince = ms;
+            if (s_inOut) {
+                D.outageS += whole;
+                H.outageS += whole;
+            } else if (ms - s_lossSince >= OUT_CONFIRM_MS) {
+                outageStart(D, H);
+            }
+        } else {
+            s_lossSince = 0;
+            if (s_inOut) outageEnd();
         }
     }
 
@@ -436,6 +451,21 @@ String statsJson(const String& range) {
     totals(j, tot);
     j += ",\"inOutage\":"; j += s_inOut ? "true" : "false";
     return j + "}";
+}
+
+void statsClear() {
+    memset(&s_day, 0, sizeof(s_day));   s_day.day = s_bound ? today() : 0;
+    memset(&s_hour, 0, sizeof(s_hour)); s_hour.hour = s_bound ? thisHour() : 0;
+    memset(&s_pend, 0, sizeof(s_pend));
+    memset(&s_pendH, 0, sizeof(s_pendH));
+    s_inOut = false; s_lossSince = 0; s_outSlot = -1;
+    s_cPv = s_cGrid = s_cLoad = 0;
+    if (!s_fs) return;
+    LittleFS.remove(F_DAYS); LittleFS.remove(F_HOURS); LittleFS.remove(F_OUT);
+    ensureFile(F_DAYS,  NDAYS  * sizeof(DayRec));
+    ensureFile(F_HOURS, NHOURS * sizeof(HourRec));
+    ensureFile(F_OUT,   sizeof(OutHdr) + NOUT * sizeof(OutRec));
+    Serial.println("[стат] статистика стёрта");
 }
 
 String outagesJson(uint16_t n) {
