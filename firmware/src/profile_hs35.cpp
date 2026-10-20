@@ -175,6 +175,7 @@ static void applyGpv(const char* f[]) {
         v.pvW  = num(f[4]);
         v.chgW = num(f[1]) * num(f[2]);   // заряд от панелей: батарея В × ток заряда
         v.pvKwhTotal = counter(f[21], f[22]);
+        v.pvKwhToday = inum(f[20]) / 100.0f;
     });
 }
 
@@ -187,6 +188,7 @@ static void applyGop(const char* f[]) {
         v.outW    = num(f[4]);
         v.loadPct = (uint8_t)inum(f[9]);
         v.loadKwhTotal = counter(f[13], f[14]);
+        v.loadKwhToday = inum(f[12]) / 100.0f;
     });
 }
 
@@ -198,6 +200,7 @@ static void applyGline(const char* f[]) {
         v.gridHz = num(f[1]);
         v.gridOn = v.gridV > 50.0f;
         v.gridKwhTotal = counter(f[11], f[12]);
+        v.gridKwhToday = inum(f[10]) / 100.0f;
     });
 }
 

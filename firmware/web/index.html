@@ -293,6 +293,29 @@ body.light pre.rep { background: #f2f4f8; }
       </div></div>
     </div>
 
+    <!-- Солнце: что панели дают сейчас и сколько дали за сегодня. -->
+    <div class="row">
+      <div class="col c1"><div class="card">
+        <h2>Солнечные панели</h2>
+        <div class="row">
+          <div class="col c4"><div class="tile">
+            <div class="k">Сейчас</div>
+            <div class="v" id="sol_w">—</div>
+            <div class="sub" id="sol_v">—</div>
+          </div></div>
+          <div class="col c4"><div class="tile">
+            <div class="k">За сегодня</div>
+            <div class="v" id="sol_day">—</div>
+            <div class="sub" id="sol_src">&nbsp;</div>
+          </div></div>
+        </div>
+        <table class="kv" style="margin-top:6px">
+          <tr><td>Из сети за сегодня</td><td id="sol_grid">—</td></tr>
+          <tr><td>Нагрузка за сегодня</td><td id="sol_load">—</td></tr>
+        </table>
+      </div></div>
+    </div>
+
     <div class="row">
       <div class="col c1"><div class="card hero">
         <div class="big"><b id="soc">—</b><span> %</span></div>
@@ -733,6 +756,15 @@ function renderInv(v, b) {
   $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
   // В карте регистров этого донгла приоритетов нет — честнее прочерк, чем догадка.
   $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "неизвестно") : "—";
+
+  // Солнце крупно; «за сегодня» — счётчик инвертора, если он его отдаёт.
+  if (live && v.pvW >= 1000) $("sol_w").innerHTML = (v.pvW / 1000).toFixed(2) + '<span> кВт</span>';
+  else $("sol_w").innerHTML = live ? (v.pvW.toFixed(0) + '<span> Вт</span>') : "—";
+  $("sol_v").innerHTML   = live ? (v.pvW > 20 ? v.pvV.toFixed(0) + " В на панелях" : "нет выработки") : "—";
+  $("sol_day").innerHTML = (v.pvToday !== undefined ? v.pvToday.toFixed(2) : "—") + '<span> кВт·ч</span>';
+  $("sol_src").innerHTML = v.todaySrc === "inv" ? "счётчик инвертора" : "по данным платы";
+  $("sol_grid").innerHTML = v.gridToday !== undefined ? v.gridToday.toFixed(2) + " кВт·ч" : "—";
+  $("sol_load").innerHTML = v.loadToday !== undefined ? v.loadToday.toFixed(2) + " кВт·ч" : "—";
   $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "неизвестно") : "—";
 }
 

@@ -82,6 +82,11 @@ static int32_t  s_outSlot = -1;                       // ячейка текущ
 
 bool statsTimeValid() { return time(nullptr) > 1700000000; }
 
+void statsToday(float& pvWh, float& gridWh, float& loadWh) {
+    const DayRec& d = s_bound ? s_day : s_pend;
+    pvWh = d.pvWh; gridWh = d.gridWh; loadWh = d.loadWh;
+}
+
 static uint32_t localNow() { return (uint32_t)(time(nullptr) + TZ_SEC); }
 static uint32_t today()    { return localNow() / 86400; }
 static uint32_t thisHour() { return localNow() / 3600; }

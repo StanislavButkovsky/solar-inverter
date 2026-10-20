@@ -107,6 +107,13 @@ static String jsonState() {
     j += ",\"fault\":"  + String(v.faultCode);
     j += ",\"prioOut\":" + String(v.prioOut);
     j += ",\"prioChg\":" + String(v.prioChg);
+    // За сегодня: счётчики самого инвертора, а нет их — статистика платы.
+    float sPv, sGrid, sLoad;
+    statsToday(sPv, sGrid, sLoad);
+    j += ",\"pvToday\":"   + String(v.pvKwhToday   >= 0 ? v.pvKwhToday   : sPv   / 1000.0f, 2);
+    j += ",\"gridToday\":" + String(v.gridKwhToday >= 0 ? v.gridKwhToday : sGrid / 1000.0f, 2);
+    j += ",\"loadToday\":" + String(v.loadKwhToday >= 0 ? v.loadKwhToday : sLoad / 1000.0f, 2);
+    j += ",\"todaySrc\":\"" + String(v.pvKwhToday >= 0 ? "inv" : "stats") + "\"";
     j += "},";
 
     j += "\"wifi\":{\"ip\":\"" + netIp() + "\",\"status\":\"" + netStatus() +

@@ -104,6 +104,11 @@ struct InvState {
     double   pvKwhTotal   = 0;
     double   gridKwhTotal = 0;
     double   loadKwhTotal = 0;
+    // Его же суточные счётчики, кВт·ч за сегодня; −1 — не отдаёт, тогда
+    // страница берёт то же из статистики платы.
+    float    pvKwhToday   = -1;
+    float    gridKwhToday = -1;
+    float    loadKwhToday = -1;
 
     int16_t  tempC        = 0;
     uint8_t  faultCode    = 0;
