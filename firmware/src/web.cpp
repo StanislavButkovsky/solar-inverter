@@ -9,6 +9,7 @@
 #include "events.h"
 #include "inv.h"
 #include "stats.h"
+#include "json.h"
 #include <WebServer.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -33,7 +34,7 @@ static String jsonState() {
     j += ",\"fresh\":"  + String(s.fresh ? "true" : "false");
     j += ",\"ageS\":"   + (s.lastFrameMs ? String(age) : String("null"));
     j += ",\"rssi\":"   + String(s.rssi);
-    j += ",\"mac\":\""  + String(s.mac) + "\"";
+    j += ",\"mac\":\""  + jsonEsc(String(s.mac)) + "\"";
     j += ",\"ok\":"     + String(s.framesOk);
     j += ",\"bad\":"    + String(s.framesBad);
     j += ",\"disc\":"   + String(s.disconnects);
@@ -116,7 +117,7 @@ static String jsonState() {
     j += ",\"todaySrc\":\"" + String(v.pvKwhToday >= 0 ? "inv" : "stats") + "\"";
     j += "},";
 
-    j += "\"wifi\":{\"ip\":\"" + netIp() + "\",\"status\":\"" + netStatus() +
+    j += "\"wifi\":{\"ip\":\"" + jsonEsc(netIp()) + "\",\"status\":\"" + jsonEsc(netStatus()) +
          "\",\"ap\":" + String(netIsAp() ? "true" : "false") + "},";
     j += "\"sim\":" + String(simEnabled() ? "true" : "false") + "}";
     return j;

@@ -1,4 +1,5 @@
 #include "events.h"
+#include "json.h"
 #include "state.h"
 #include <time.h>
 
@@ -118,7 +119,7 @@ String evJson() {
         j += ",\"ago\":" + String((millis() - e.ms) / 1000);
         j += ",\"level\":\"" + String(levelName(evLevel(e.kind))) + "\"";
         j += ",\"text\":\"" + String(evText(e.kind)) + "\"";
-        j += ",\"detail\":\"" + String(e.detail) + "\"}";
+        j += ",\"detail\":\"" + jsonEsc(String(e.detail)) + "\"}";
     }
     return j + "]";
 }
