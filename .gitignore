@@ -5,6 +5,9 @@ firmware/.pio/
 # Источник правды — html, поэтому копия в репозитории только мешала бы.
 firmware/src/webui_gz.h
 
+# Метка сборки, пишется на каждой сборке тем же скриптом.
+firmware/src/build_info.h
+
 # --- Android ---
 android-app/.gradle/
 android-app/build/

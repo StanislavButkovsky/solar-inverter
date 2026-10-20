@@ -38,4 +38,26 @@ def build():
           % (len(raw), len(packed), 100.0 * len(packed) / len(raw)))
 
 
+
+# Метка сборки: время и коммит. Пишется на каждой сборке, поэтому ota.cpp,
+# который её включает, пересобирается всегда, — и на странице видно именно
+# время этой прошивки. __DATE__ в самом ota.cpp показывал время его последней
+# пересборки: правки в других файлах дату не меняли, и по ней нельзя было
+# понять, встало ли обновление.
+def build_info():
+    import subprocess, time
+    try:
+        rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                      cwd=env.subst("$PROJECT_DIR"), text=True).strip()   # noqa
+        dirty = subprocess.call(["git", "diff", "--quiet", "HEAD"], cwd=env.subst("$PROJECT_DIR"))   # noqa
+        rev += "+правки" if dirty else ""
+    except Exception:
+        rev = "без git"
+    stamp = time.strftime("%d.%m.%Y %H:%M")
+    dst = os.path.join(env.subst("$PROJECT_DIR"), "src", "build_info.h")   # noqa
+    open(dst, "w").write('// Сгенерировано scripts/gen_web.py на каждой сборке — не править.\n'
+                         '#pragma once\n#define BUILD_INFO "%s, %s"\n' % (stamp, rev))
+
+
 build()
+build_info()

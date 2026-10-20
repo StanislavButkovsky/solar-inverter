@@ -1,10 +1,11 @@
 #include "ota.h"
 #include "cfg.h"
 #include <ArduinoOTA.h>
+#include "build_info.h"
 
 static bool s_started = false;
 
-const char* fwBuild() { return __DATE__ " " __TIME__; }
+const char* fwBuild() { return BUILD_INFO; }
 
 bool otaPasswordSet() { return cfg().webPass.length() >= 6; }
 
