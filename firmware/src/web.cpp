@@ -10,6 +10,8 @@
 #include "inv.h"
 #include "stats.h"
 #include "json.h"
+#include "ota.h"
+#include <Update.h>
 #include <WebServer.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -119,7 +121,8 @@ static String jsonState() {
 
     j += "\"wifi\":{\"ip\":\"" + jsonEsc(netIp()) + "\",\"status\":\"" + jsonEsc(netStatus()) +
          "\",\"ap\":" + String(netIsAp() ? "true" : "false") + "},";
-    j += "\"sim\":" + String(simEnabled() ? "true" : "false") + "}";
+    j += "\"sim\":" + String(simEnabled() ? "true" : "false");
+    j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false") + "}";
     return j;
 }
 
@@ -258,6 +261,56 @@ void webStart() {
         server.send(200, "application/json; charset=utf-8", j);
     });
 #endif
+
+    // Обновление прошивки со страницы. Пароль — в адресе (?pass=): обработчик
+    // загрузки видит аргументы адреса до первого байта файла, а поля формы —
+    // только после, когда решать уже поздно.
+    static String s_otaErr;
+    static bool   s_otaOk = false;
+    server.on("/api/ota", HTTP_POST, []() {
+        bool ok = s_otaOk && !Update.hasError();
+        server.sendHeader("Connection", "close");
+        server.send(200, "application/json; charset=utf-8",
+                    ok ? String("{\"ok\":true}")
+                       : "{\"ok\":false,\"error\":\"" + jsonEsc(s_otaErr.length() ? s_otaErr : String("файл не принят")) + "\"}");
+        if (ok) { Serial.println("[ota] прошивка со страницы принята, перезагрузка"); delay(500); ESP.restart(); }
+    }, []() {
+        HTTPUpload& up = server.upload();
+        if (up.status == UPLOAD_FILE_START) {
+            s_otaOk = false;
+            s_otaErr = "";
+            if (!otaPasswordSet() || server.arg("pass") != cfg().webPass) { s_otaErr = "неверный пароль"; return; }
+            Serial.printf("[ota] приём прошивки со страницы: %s\n", up.filename.c_str());
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) s_otaErr = Update.errorString();
+        } else if (up.status == UPLOAD_FILE_WRITE) {
+            if (s_otaErr.length()) return;
+            if (Update.write(up.buf, up.currentSize) != up.currentSize) s_otaErr = Update.errorString();
+        } else if (up.status == UPLOAD_FILE_END) {
+            if (s_otaErr.length()) { if (Update.isRunning()) Update.abort(); return; }
+            if (Update.end(true)) s_otaOk = true;      // образ проверен: чип, сумма
+            else s_otaErr = Update.errorString();
+        } else if (up.status == UPLOAD_FILE_ABORTED) {
+            if (Update.isRunning()) Update.abort();
+            s_otaErr = "загрузка прервана";
+        }
+    });
+
+    // Пароль на обновление. Задать с нуля может любой в домашней сети — так он
+    // появляется впервые; сменить — только зная прежний.
+    server.on("/api/pass", HTTP_GET, []() {
+        String nw = server.arg("new"), old = server.arg("old");
+        String err;
+        if (nw.length() < 6)                                   err = "пароль — от 6 символов";
+        else if (otaPasswordSet() && old != cfg().webPass)     err = "прежний пароль не тот";
+        if (err.length()) {
+            server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"" + err + "\"}");
+            return;
+        }
+        cfg().webPass = nw;
+        cfgSave();
+        otaStart();                                            // новый пароль — сразу в ArduinoOTA
+        server.send(200, "application/json", "{\"ok\":true}");
+    });
 
     // Статистика: day | week | month | year. Месяцы собираются из дней на лету.
     server.on("/api/stats", HTTP_GET, []() {

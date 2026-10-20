@@ -545,6 +545,37 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row">
     <div class="col c1"><div class="card">
+      <h2>Обновление прошивки</h2>
+      <div class="sub" id="fw_ver" style="margin-bottom:10px">Сборка: —</div>
+      <div id="ota_setpass">
+        <div class="sub" style="margin-bottom:6px">
+          Пароль ещё не задан, и обновление по сети выключено. Придумайте его
+          (от 6 символов) — без него прошить модуль сможет любой в вашей сети.
+        </div>
+        <label>Новый пароль</label>
+        <input id="pw_new" type="password" autocomplete="new-password">
+        <div style="margin-top:10px"><button class="wide" onclick="setPass()">Задать пароль</button></div>
+      </div>
+      <div id="ota_form">
+        <label>Пароль</label>
+        <input id="ota_pass" type="password" autocomplete="current-password">
+        <label>Файл прошивки (firmware.bin)</label>
+        <input id="ota_file" type="file" accept=".bin">
+        <div style="margin-top:12px">
+          <button class="wide accent" onclick="otaUpload()" id="ota_btn">Загрузить и перезагрузить</button>
+        </div>
+      </div>
+      <div class="sub" id="ota_msg" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px">
+        Новая прошивка пишется в свободный слот, прежняя остаётся, пока новая не
+        загрузилась. Файл для другой платы модуль не примет. Не отключайте питание
+        во время загрузки — около минуты.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
       <h2>Оформление</h2>
       <div class="sub" style="margin-bottom:12px">
         Выбор хранится в самом браузере, поэтому у планшета на стене и у телефона
@@ -788,6 +819,7 @@ function renderInv(v, b) {
 
 function render(s) {
   var b = s.bms, l = s.link;
+  otaRender(s);
   if (s.inv) renderInv(s.inv, b);
 
   /* --- состояние связи, мелким под процентами --- */
@@ -1032,6 +1064,51 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- обновление прошивки */
+var otaKnown = null;
+function otaRender(s) {
+  $("fw_ver").innerHTML = "Сборка: " + (s.fw || "—");
+  if (otaKnown === s.otaPass) return;           // не дёргать форму на каждом опросе
+  otaKnown = s.otaPass;
+  show("ota_setpass", !s.otaPass);
+  show("ota_form", !!s.otaPass);
+}
+function setPass() {
+  var nw = $("pw_new").value;
+  get("/api/pass?new=" + encodeURIComponent(nw), function (r) {
+    $("ota_msg").innerHTML = r.ok ? "пароль задан — теперь можно обновлять" : (r.error || "не вышло");
+    if (r.ok) { otaKnown = null; $("pw_new").value = ""; }
+  }, function () { $("ota_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
+}
+function otaUpload() {
+  var f = $("ota_file").files[0];
+  if (!f) { $("ota_msg").innerHTML = "выберите файл firmware.bin"; return; }
+  var x = new XMLHttpRequest(), fd = new FormData();
+  fd.append("firmware", f, f.name);
+  busyRadio = true;                               // опрос на время загрузки молчит
+  $("ota_btn").disabled = true;
+  x.open("POST", "/api/ota?pass=" + encodeURIComponent($("ota_pass").value), true);
+  x.upload.onprogress = function (e) {
+    if (e.lengthComputable) $("ota_msg").innerHTML = "загрузка " + Math.round(100 * e.loaded / e.total) + " %";
+  };
+  x.onload = function () {
+    var r = {};
+    try { r = JSON.parse(x.responseText); } catch (e) { }
+    if (r.ok) {
+      $("ota_msg").innerHTML = "принято, модуль перезагружается — страница обновится сама";
+      setTimeout(function () { location.reload(); }, 15000);
+    } else {
+      $("ota_msg").innerHTML = "не принято: " + (r.error || ("ответ " + x.status));
+      busyRadio = false; $("ota_btn").disabled = false;
+    }
+  };
+  x.onerror = function () {
+    $("ota_msg").innerHTML = "связь оборвалась во время загрузки — прежняя прошивка на месте, попробуйте ещё раз";
+    busyRadio = false; $("ota_btn").disabled = false;
+  };
+  x.send(fd);
+}
+
 /* ----------------------------------------- частота обновления */
 var refreshS = 1, refreshTimer = null;
 try { var rs = parseInt(localStorage.getItem("refresh"), 10); if (rs > 0) refreshS = rs; } catch (e) { }

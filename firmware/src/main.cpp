@@ -17,6 +17,7 @@
 #include "events.h"
 #include "stats.h"
 #include "rtc.h"
+#include "ota.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -46,6 +47,7 @@ void setup() {
 
     netStart();
     webStart();
+    otaStart();
     simStart();
     dalyStart();
     rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
@@ -69,5 +71,6 @@ void loop() {
     evWatchLoop();
     statsLoop();
     rtcLoop();
+    otaLoop();
     delay(2);
 }
