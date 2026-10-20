@@ -20,6 +20,7 @@
 #include "state.h"
 #include <Preferences.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 const char*    INV_PROFILE_NAME = "JsdSolar G-ASCII (HS35 по USB)";
@@ -121,6 +122,40 @@ static Kind classify(const char* line, const char* f[], int n) {
 }
 
 static void fresh(InvState& v) { v.linked = true; v.fresh = true; v.lastFrameMs = millis(); }
+
+// ------------------------------------------------------------------ заряд
+
+// Процент приходит из трёх мест разной точности: GBMS — от BMS самой
+// батареи, с десятыми; BL — уровень по версии инвертора; GPDAT0 поле 17 —
+// грубая оценка инвертора по напряжению, крупным шагом. Показывался тот,
+// что пришёл последним, и цифра скакала: на экране то 38, то 9, то 100.
+// Теперь менее точный источник не перебивает более точный, пока тот
+// приходит; замолчал на 2 минуты — берём следующий.
+enum SocSrc : uint8_t { SOC_NONE, SOC_GPDAT0, SOC_BL, SOC_GBMS };
+static const char* const SOC_NAME[] = { "—", "GPDAT0 (оценка по напряжению)", "BL", "GBMS (BMS батареи)" };
+static uint8_t  s_socSrc = SOC_NONE;
+static uint32_t s_socMs = 0;
+static float    s_socLast = -1;
+static String   s_jumps;                 // скачки больше 15 пунктов — для разбора
+
+static void setSoc(float soc, SocSrc src, const char* line) {
+    if (soc < 0 || soc > 100) return;
+    if (src < s_socSrc && millis() - s_socMs < 120000) return;
+    if (s_socLast >= 0 && fabsf(soc - s_socLast) > 15 && s_jumps.length() < 900) {
+        char b[48];
+        snprintf(b, sizeof(b), "    %.0f%% → %.0f%% из %s: ", s_socLast, soc, SOC_NAME[src]);
+        s_jumps += String(b) + String(line).substring(0, 100) + "\n";
+        if (s_nvs.begin("invprof", false)) { s_nvs.putString("jumps", s_jumps); s_nvs.end(); }
+    }
+    s_socSrc = src;
+    s_socMs = millis();
+    s_socLast = soc;
+    stateUpdate([&](BmsState& b) {
+        b.soc = soc;
+        b.socKnown = true;
+        if (s_capAh > 0) b.remainingMah = (uint32_t)(s_capAh * soc * 10.0f);   // А·ч × % → мА·ч
+    });
+}
 static void bmsFresh(BmsState& b) { b.linked = true; b.fresh = true; b.lastFrameMs = millis(); }
 
 // Счётчик из двух полей: старшие и младшие 16 бит, в сотых кВт·ч. На HS35
@@ -134,7 +169,7 @@ static double counter(const char* hi, const char* lo) {
 //          015 0739 0607 050 267.6 000.0 0784 060.0
 // 1 режим, 7–8 сеть, 9–10 выход, 12 батарея В, 13 ток (без знака), 14 загрузка,
 // 15 ВА, 16 Вт, 17 заряд %, 18 панели В, 20 панели Вт, 21 температура.
-static void applyGpdat0(const char* f[]) {
+static void applyGpdat0(const char* f[], const char* line) {
     uint8_t mode;
     switch (f[1][0]) {
     case '2': mode = INVM_FAULT;   break;
@@ -162,9 +197,8 @@ static void applyGpdat0(const char* f[]) {
     stateUpdate([&](BmsState& b) {
         bmsFresh(b);
         b.voltage  = num(f[12]);
-        b.soc      = inum(f[17]);
-        b.socKnown = true;
     });
+    setSoc(inum(f[17]), SOC_GPDAT0, line);
 }
 
 // GPV: (260.4 049.1 00.00 02.95 00768 … 20 сегодня, 21–22 всего
@@ -207,7 +241,7 @@ static void applyGline(const char* f[]) {
 // GBMS: (00008 00000 00491 65446 00220 00450 32767 02000 …
 // 2 напряжение /10, 3 ток /100 со знаком, 4 температура /10, 5 заряд /10,
 // 6 остаток /10, 7 ёмкость /10. 32767 и 65535 — «нет данных».
-static void applyGbms(const char* f[]) {
+static void applyGbms(const char* f[], const char* line) {
     long rawI = inum(f[3]);
     if (rawI == 65535 || inum(f[2]) == 65535) return;    // BMS не на связи
     float amps = (int16_t)(uint16_t)rawI / 100.0f;
@@ -220,9 +254,8 @@ static void applyGbms(const char* f[]) {
         b.current = amps;                 // минус — разряд
         b.chargeState = amps > 0.5f ? 1 : (amps < -0.5f ? 2 : 0);
         b.tempMax = b.tempMin = (int16_t)(inum(f[4]) / 10);
-        if (soc10 >= 0 && soc10 <= 1000) { b.soc = soc10 / 10.0f; b.socKnown = true; }
-        if (s_capAh > 0) b.remainingMah = (uint32_t)(s_capAh * b.soc * 10.0f);   // А·ч × % → мА·ч
     });
+    if (soc10 >= 0 && soc10 <= 1000) setSoc(soc10 / 10.0f, SOC_GBMS, line);
 }
 
 static void applyGws(const char* f[]) {
@@ -302,14 +335,15 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         if (k != K_Q1) { s_gSeen = true; s_sent = 0; }
         remember(k, line);
         switch (k) {
-        case K_GPDAT0: applyGpdat0(f); break;
+        case K_GPDAT0: applyGpdat0(f, line); break;
         case K_GPV:    applyGpv(f);    break;
         case K_GOP:    applyGop(f);    break;
         case K_GLINE:  applyGline(f);  break;
-        case K_GBMS:   applyGbms(f);   break;
+        case K_GBMS:   applyGbms(f, line); break;
         case K_BL: {
             long soc = inum(line + 2);
-            stateUpdate([&](BmsState& b) { bmsFresh(b); b.soc = soc; b.socKnown = true; });
+            stateUpdate([&](BmsState& b) { bmsFresh(b); });
+            setSoc(soc, SOC_BL, line);
             break;
         }
         case K_GWS:    applyGws(f);    break;
@@ -323,8 +357,14 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
 }
 
 String invProfileReport() {
-    String r = s_report;
-    if (!r.length() && s_nvs.begin("invprof", true)) { r = s_nvs.getString("disc", ""); s_nvs.end(); }
+    String r = s_report, j = s_jumps;
+    if ((!r.length() || !j.length()) && s_nvs.begin("invprof", true)) {
+        if (!r.length()) r = s_nvs.getString("disc", "");
+        if (!j.length()) j = s_nvs.getString("jumps", "");
+        s_nvs.end();
+    }
+    r += String("    заряд сейчас из: ") + SOC_NAME[s_socSrc] + "\n";
+    if (j.length()) r += "    скачки заряда:\n" + j;
     return r;
 }
 
