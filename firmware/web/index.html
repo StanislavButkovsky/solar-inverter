@@ -528,7 +528,8 @@ body.light pre.rep { background: #f2f4f8; }
 <div id="settings" class="hidden">
 
   <div class="row" style="margin-top:12px">
-    <div class="col c1"><button onclick="showDash()">← К показаниям</button></div>
+    <div class="col c1"><button onclick="showDash()">← К показаниям</button>
+      <button onclick="showStats()">Статистика</button></div>
   </div>
 
   <div class="row hidden" id="saved"><div class="col c1"></div></div>
@@ -847,13 +848,14 @@ function setTab(t) {
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
 function showStats()    { onSettings = false; onStats = true;  paint(); stLoad(); }
-function showDash()     { onSettings = false; onStats = false; paint(); pwDraw();
-  if (/^#settings/.test(location.hash) && history.replaceState) history.replaceState(null, "", location.pathname + location.search); }
+function showDash()     { onSettings = false; onStats = false; paint(); pwDraw(); }
 // Ссылка вида #settings/tg открывает сразу нужную вкладку настроек.
 function fromHash() { var m = /^#settings(?:\/(\w+))?/.exec(location.hash); if (m) showSettings(m[1]); }
 window.addEventListener("hashchange", fromHash);
 function paint() {
   show("dash", !onSettings && !onStats); show("settings", onSettings); show("stats", onStats);
+  if (!onSettings && /^#settings/.test(location.hash) && history.replaceState)
+    history.replaceState(null, "", location.pathname + location.search);
   window.scrollTo(0, 0);
 }
 
@@ -1626,8 +1628,8 @@ function usbPoll() {
 get("/api/time?t=" + Math.floor(new Date().getTime() / 1000), function () {});
 
 applyTheme();
-paint();
-fromHash();
+fromHash();                                     // ссылка #settings/… — сначала она, иначе paint() сотрёт адрес
+if (!onSettings) paint();
 tick();
 events();
 usbPoll();
