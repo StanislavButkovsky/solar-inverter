@@ -378,6 +378,9 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         s_buf[s_len] = 0;
         s_len = 0;
         const char* line = s_buf;
+        // Пустые строки (бывают между ответами) — не ответ: очередь не трогаем,
+        // иначе снимется команда, ответ на которую ещё впереди.
+        if (!line[0]) continue;
         const char* body = line[0] == '(' ? line + 1 : line;
         const char* f[32];
         int nf = split(body, f, 32);
