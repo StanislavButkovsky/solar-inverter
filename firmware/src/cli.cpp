@@ -58,6 +58,7 @@ static void printStatus() {
     Serial.printf("  память: свободно %u, крупнейший кусок %u, минимум за работу %u байт; работает %lu мин\n",
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap(),
                   (unsigned long)(millis() / 60000));
+    Serial.printf("  PSRAM: %u байт, свободно %u\n", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
     Serial.printf("--- telegram ---\n  %s\n", tgStateJson().c_str());
     Serial.println("--- время ---");
     if (statsTimeValid()) {
