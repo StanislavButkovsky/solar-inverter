@@ -204,6 +204,35 @@ body.light .chip.amber { background: #fdf0d4; color: #8a5a06; }
 body.light .chip.red   { background: #fde1dc; color: #a32c17; }
 body.light .chip.blue  { background: #dce9ff; color: #14479e; }
 
+/* График за сутки: цвет — величина, тот же, что на схеме; проверено
+   валидатором палитры для обеих тем. Батарея пунктиром: с солнцем её хуже
+   различают при протанопии, поэтому вторая примета — не только цвет. */
+.pw { display: block; width: 100%; height: 210px; touch-action: pan-y; }
+.pw .gl { stroke: #262c38; stroke-width: 1; }
+.pw .ax { fill: #8a93a5; font-size: 10px; }
+.pw .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.pw .lb { font-size: 10px; font-weight: 600; }
+.pw .cross { stroke: #8a93a5; stroke-width: 1; }
+.c-pv   { stroke: #c98222; fill: #c98222; color: #c98222; }
+.c-load { stroke: #d0508a; fill: #d0508a; color: #d0508a; }
+.c-batt { stroke: #23a35a; fill: #23a35a; color: #23a35a; }
+.c-grid { stroke: #5794e4; fill: #5794e4; color: #5794e4; }
+.pw .ln.c-pv, .pw .ln.c-load, .pw .ln.c-batt, .pw .ln.c-grid { fill: none; }
+.pw .ln.c-batt { stroke-dasharray: 5 4; }
+.pwleg { font-size: 12px; color: #8a93a5; margin-bottom: 4px; }
+.pwleg span { display: inline-block; margin-right: 12px; white-space: nowrap; }
+.pwleg i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+.pwleg i.dash { border-top-style: dashed; }
+#pw_tip { min-height: 34px; font-size: 12px; line-height: 1.5; color: #eef1f6; }
+#pw_tip b { font-weight: 600; }
+body.light .pw .gl { stroke: #e7ebf2; }
+body.light .c-pv   { stroke: #d4900f; fill: #d4900f; color: #d4900f; }
+body.light .c-load { stroke: #c23f7c; fill: #c23f7c; color: #c23f7c; }
+body.light .c-batt { stroke: #157a45; fill: #157a45; color: #157a45; }
+body.light .c-grid { stroke: #3a78d0; fill: #3a78d0; color: #3a78d0; }
+body.light .pw .ln.c-pv, body.light .pw .ln.c-load, body.light .pw .ln.c-batt, body.light .pw .ln.c-grid { fill: none; }
+body.light #pw_tip { color: #1d2433; }
+
 /* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
@@ -290,6 +319,21 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Приоритет выхода</td><td id="i_po">—</td></tr>
           <tr><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
         </table>
+      </div></div>
+    </div>
+
+    <!-- Мощности за сутки: средние за 5 минут из /api/power. -->
+    <div class="row">
+      <div class="col c1"><div class="card">
+        <h2>Мощности за сутки</h2>
+        <div class="pwleg">
+          <span><i class="c-pv"></i>Солнце</span><span><i class="c-load"></i>Нагрузка</span><span><i
+                class="c-batt dash"></i>Батарея (+ заряд, − разряд)</span><span><i class="c-grid"></i>Сеть</span>
+        </div>
+        <svg class="pw" id="pw_svg"></svg>
+        <div id="pw_tip" class="sub">нажмите на график, чтобы увидеть значения</div>
+        <h2 style="margin-top:10px">Заряд батареи, %</h2>
+        <svg class="pw" id="pw_soc" style="height:70px"></svg>
       </div></div>
     </div>
 
@@ -739,7 +783,7 @@ function get(url, cb, onFail) {
 var onSettings = false, onStats = false;
 function showSettings() { onSettings = true;  onStats = false; paint(); }
 function showStats()    { onSettings = false; onStats = true;  paint(); stLoad(); }
-function showDash()     { onSettings = false; onStats = false; paint(); }
+function showDash()     { onSettings = false; onStats = false; paint(); pwDraw(); }
 function paint() {
   show("dash", !onSettings && !onStats); show("settings", onSettings); show("stats", onStats);
   window.scrollTo(0, 0);
@@ -1199,6 +1243,95 @@ function setRefresh(sec) {
   tick();                                 // сразу, не дожидаясь нового интервала
 }
 
+/* ----------------------------------------- график за сутки */
+var PW = [["pv", "Солнце"], ["load", "Нагрузка"], ["batt", "Батарея"], ["grid", "Сеть"]];
+var pwData = null, pwSel = -1;
+
+function pwLoad() {
+  if (busyRadio || onSettings || onStats) return;
+  get("/api/power", function (d) { pwData = d; pwDraw(); });
+}
+function kw(w) { return Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + " кВт" : Math.round(w) + " Вт"; }
+function slotTime(slot) {                      // 5-минутный шаг от 1970 года, местное время модуля
+  var d = new Date(slot * 300000);
+  return two(d.getUTCHours()) + ":" + two(d.getUTCMinutes());
+}
+
+// Путь линии с разрывами там, где данных не было.
+function pwPath(arr, x, y) {
+  var d = "", pen = false;
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] === null) { pen = false; continue; }
+    d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(arr[i]).toFixed(1);
+    pen = true;
+  }
+  return d;
+}
+
+function pwDraw() {
+  var d = pwData, svg = $("pw_svg"), socs = $("pw_soc");
+  if (!d || !d.valid) { svg.innerHTML = ""; socs.innerHTML = ""; $("pw_tip").innerHTML = "у модуля пока нет времени — график появится, когда оно будет"; return; }
+  var W = svg.clientWidth || 360, H = 210, L = 34, R = 50, T = 8, B = 18;
+  var n = d.pv.length, lo = 0, hi = 0, k, i, has = false;
+  for (k = 0; k < PW.length; k++) for (i = 0; i < n; i++) {
+    var v = d[PW[k][0]][i]; if (v === null) continue; has = true;
+    if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  if (!has) { svg.innerHTML = ""; socs.innerHTML = ""; $("pw_tip").innerHTML = "за последние сутки данных пока нет"; return; }
+  // Шаг сетки — круглое число ватт.
+  var span = hi - lo || 1, raw = span / 4, mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+  var step = raw / mag > 5 ? 10 * mag : raw / mag > 2 ? 5 * mag : raw / mag > 1 ? 2 * mag : mag;
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  var x = function (j) { return L + (W - L - R) * j / (n - 1); };
+  var y = function (v) { return T + (H - T - B) * (hi - v) / (hi - lo || 1); };
+  var h = "";
+  for (var g = lo; g <= hi + 0.5; g += step) {
+    h += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(g) + '" y2="' + y(g) + '"' +
+         (g === 0 ? ' style="stroke-width:1.5"' : '') + '/>';
+    h += '<text class="ax" x="' + (L - 4) + '" y="' + (y(g) + 3) + '" text-anchor="end">' + (Math.abs(g) >= 1000 ? (g / 1000) + "к" : g) + '</text>';
+  }
+  for (i = 0; i < n; i++) {                    // подписи времени — на круглых трёх часах
+    var slot = d.end - (n - 1) + i;
+    if (slot % 36 === 0) h += '<text class="ax" x="' + x(i) + '" y="' + (H - 4) + '" text-anchor="middle">' + slotTime(slot).slice(0, 2) + '</text>';
+  }
+  for (k = 0; k < PW.length; k++) {
+    var key = PW[k][0], arr = d[key];
+    h += '<path class="ln c-' + key + '" d="' + pwPath(arr, x, y) + '"/>';
+    // Подпись у последней точки ряда — имя видно без легенды.
+    for (i = n - 1; i >= 0 && arr[i] === null; i--) { }
+    if (i >= 0) h += '<text class="lb c-' + key + '" x="' + (x(i) + 4) + '" y="' + (y(arr[i]) + 3) + '" style="stroke:none">' + PW[k][1] + '</text>';
+  }
+  if (pwSel >= 0) h += '<line class="cross" x1="' + x(pwSel) + '" x2="' + x(pwSel) + '" y1="' + T + '" y2="' + (H - B) + '"/>';
+  // Попадание — вся ширина графика, а не тонкая линия.
+  h += '<rect x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + H + '" fill="transparent" id="pw_hit"/>';
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.innerHTML = h;
+  $("pw_hit").onclick = function (e) {
+    var r = svg.getBoundingClientRect();
+    pwSel = Math.max(0, Math.min(n - 1, Math.round((e.clientX - r.left - L) / (W - L - R) * (n - 1))));
+    pwDraw();
+  };
+
+  // Заряд — отдельно: другая величина, на общей оси ей не место.
+  var Hs = 70, ys = function (v) { return 6 + (Hs - 12) * (100 - v) / 100; }, sh = "";
+  for (var q = 0; q <= 100; q += 50)
+    sh += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + ys(q) + '" y2="' + ys(q) + '"/>' +
+          '<text class="ax" x="' + (L - 4) + '" y="' + (ys(q) + 3) + '" text-anchor="end">' + q + '</text>';
+  sh += '<path class="ln c-batt" style="stroke-dasharray:none" d="' + pwPath(d.soc, x, ys) + '"/>';
+  if (pwSel >= 0) sh += '<line class="cross" x1="' + x(pwSel) + '" x2="' + x(pwSel) + '" y1="4" y2="' + (Hs - 4) + '"/>';
+  socs.setAttribute("viewBox", "0 0 " + W + " " + Hs);
+  socs.innerHTML = sh;
+
+  if (pwSel >= 0) {
+    var j = pwSel, t = "<b>" + slotTime(d.end - (n - 1) + j) + "</b> — ";
+    if (d.pv[j] === null) t += "данных не было";
+    else t += "солнце " + kw(d.pv[j]) + ", нагрузка " + kw(d.load[j]) + "<br>батарея " +
+              (d.batt[j] > 0 ? "+" : "") + kw(d.batt[j]) + ", сеть ≈ " + kw(d.grid[j]) +
+              (d.soc[j] !== null ? ", заряд " + d.soc[j] + " %" : "");
+    $("pw_tip").innerHTML = t;
+  }
+}
+
 /* ----------------------------------------- статистика */
 var stR = "day", stM = "l", stData = null, stSel = -1;
 var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -1346,6 +1479,9 @@ tick();
 events();
 usbPoll();
 startRefresh();
+pwLoad();
+setInterval(pwLoad, 60000);                     // точки идут раз в 5 минут — чаще незачем
+window.onresize = function () { pwDraw(); };
 setInterval(events, 5000);
 setInterval(usbPoll, 3000);
 // На экране статистики — свежие цифры раз в полминуты, остальное время не дёргаем.

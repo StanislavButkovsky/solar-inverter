@@ -12,6 +12,7 @@
 //   /stats/days.bin     366 дней кольцом, по 64 байта   — 23 КБ
 //   /stats/hours.bin    168 часов кольцом, по 32 байта  — 5 КБ
 //   /stats/outages.bin  1000 отключений кольцом         — 12 КБ
+//   /stats/power.bin    288 средних за 5 минут кольцом  — 4,5 КБ (график за сутки)
 // Месяцы и год по месяцам собираются из дней при запросе.
 //
 // Сутки и часы — по местному времени UTC+3, как у NTP в net.cpp. Пока
@@ -24,6 +25,7 @@ void   statsStart();
 void   statsLoop();                       // из loop(): сам решает, когда копить и писать
 String statsJson(const String& range);    // day | week | month | year
 String outagesJson(uint16_t n);           // последние отключения, новые сверху
+String powerJson();                       // мощности за сутки по 5 минут — для графика
 bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня

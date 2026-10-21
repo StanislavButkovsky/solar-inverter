@@ -341,6 +341,11 @@ void webStart() {
         server.send(200, "application/json; charset=utf-8", statsJson(r));
     });
 
+    server.on("/api/power", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", powerJson());
+    });
+
     server.on("/api/outages", HTTP_GET, []() {
         uint16_t n = server.hasArg("n") ? server.arg("n").toInt() : 30;
         if (n < 1) n = 1;

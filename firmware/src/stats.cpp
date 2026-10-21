@@ -23,6 +23,16 @@ static const uint32_t OUT_MAGIC = 0x4F555431;          // "OUT1"
 static const char* F_DAYS  = "/stats/days.bin";
 static const char* F_HOURS = "/stats/hours.bin";
 static const char* F_OUT   = "/stats/outages.bin";
+static const char* F_PWR   = "/stats/power.bin";
+
+// Мощности за сутки: средние за 5 минут, 288 точек кольцом — для графика.
+// Вт со знаком у батареи (заряд +, разряд −); заряд в процентах, 255 — нет.
+static const uint16_t NPWR = 288, PWR_STEP = 300;
+struct PwrRec { uint32_t slot; int16_t pv, load, batt, grid; uint8_t soc, n, _r[2]; };
+static_assert(sizeof(PwrRec) == 16, "PwrRec");
+static uint32_t s_pSlot = 0;                          // текущие 5 минут, местные
+static float    s_pPv = 0, s_pLoad = 0, s_pBatt = 0, s_pGrid = 0, s_pSoc = 0;
+static uint16_t s_pN = 0, s_pSocN = 0;
 
 // day = сутки от 1970 года по местному времени; 0 — пустая ячейка.
 // Поля стоят по убыванию размера: выравнивание естественное, упаковка не
@@ -188,6 +198,35 @@ static void mergeHour(HourRec& a, const HourRec& b) {
     a.outageS += b.outageS; a.dataS += b.dataS;
 }
 
+static PwrRec pwrCurrent() {
+    PwrRec r = {};
+    r.slot = s_pSlot;
+    if (s_pN) {
+        r.pv = (int16_t)(s_pPv / s_pN);   r.load = (int16_t)(s_pLoad / s_pN);
+        r.batt = (int16_t)(s_pBatt / s_pN); r.grid = (int16_t)(s_pGrid / s_pN);
+        r.n = s_pN > 255 ? 255 : s_pN;
+    }
+    r.soc = s_pSocN ? (uint8_t)(s_pSoc / s_pSocN + 0.5f) : 255;
+    return r;
+}
+
+static void pwrSample(const InvState& v, const BmsState& b) {
+    uint32_t slot = localNow() / PWR_STEP;
+    if (slot != s_pSlot) {
+        if (s_pSlot && s_pN && s_fs) {
+            PwrRec r = pwrCurrent();
+            writeAt(F_PWR, (r.slot % NPWR) * sizeof(PwrRec), &r, sizeof(r));
+        }
+        s_pSlot = slot;
+        s_pPv = s_pLoad = s_pBatt = s_pGrid = s_pSoc = 0;
+        s_pN = s_pSocN = 0;
+    }
+    s_pPv += v.pvW; s_pLoad += v.outW; s_pGrid += v.gridW;
+    s_pBatt += b.fresh ? b.voltage * b.current : 0;
+    s_pN++;
+    if (b.fresh && b.socKnown) { s_pSoc += b.soc; s_pSocN++; }
+}
+
 static void flush() {
     s_lastFlush = millis();
     if (!s_fs || !s_bound) return;
@@ -309,6 +348,7 @@ void statsLoop() {
         D.pvWh   += pv;           H.pvWh   += pv;
         D.chgWh  += v.chgW  * k;  H.chgWh  += v.chgW  * k;
 
+        if (s_bound) pwrSample(v, b);
         if (v.gridOn) minmax(D.gridVmin, D.gridVmax, v.gridV);
         if (b.fresh)  minmax(D.battVmin, D.battVmax, b.voltage);
         if (v.tempC > D.tempMax)   D.tempMax = v.tempC;
@@ -340,6 +380,7 @@ void statsStart() {
     ensureFile(F_DAYS,  NDAYS  * sizeof(DayRec));
     ensureFile(F_HOURS, NHOURS * sizeof(HourRec));
     ensureFile(F_OUT,   sizeof(OutHdr) + NOUT * sizeof(OutRec));
+    ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
 
     // Отключение, оборванное пропажей питания платы, закрываем тем концом,
     // что успели записать: это нижний предел его длительности.
@@ -477,11 +518,40 @@ void statsClear() {
     s_inOut = false; s_lossSince = 0; s_outSlot = -1;
     s_cPv = s_cGrid = s_cLoad = 0;
     if (!s_fs) return;
-    LittleFS.remove(F_DAYS); LittleFS.remove(F_HOURS); LittleFS.remove(F_OUT);
+    LittleFS.remove(F_DAYS); LittleFS.remove(F_HOURS); LittleFS.remove(F_OUT); LittleFS.remove(F_PWR);
+    ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
+    s_pSlot = 0; s_pN = s_pSocN = 0;
     ensureFile(F_DAYS,  NDAYS  * sizeof(DayRec));
     ensureFile(F_HOURS, NHOURS * sizeof(HourRec));
     ensureFile(F_OUT,   sizeof(OutHdr) + NOUT * sizeof(OutRec));
     Serial.println("[стат] статистика стёрта");
+}
+
+// Последние сутки по 5 минут: массивы по рядам, null — данных не было.
+// Сутки — 288 шагов, заканчивая текущими (неполными) 5 минутами.
+String powerJson() {
+    if (!s_bound) return "{\"valid\":false}";
+    uint32_t end = localNow() / PWR_STEP;
+    static PwrRec buf[NPWR];
+    memset(buf, 0, sizeof(buf));
+    if (s_fs) readAt(F_PWR, 0, buf, sizeof(buf));
+    String a[5];
+    for (auto& x : a) x.reserve(1400);
+    for (uint32_t i = 0; i < NPWR; i++) {
+        uint32_t slot = end - (NPWR - 1) + i;
+        PwrRec r = slot == s_pSlot ? pwrCurrent() : buf[slot % NPWR];
+        bool have = r.slot == slot && r.n;
+        const char* sep = i ? "," : "";
+        if (!have) { for (auto& x : a) { x += sep; x += "null"; } continue; }
+        a[0] += sep; a[0] += r.pv;
+        a[1] += sep; a[1] += r.load;
+        a[2] += sep; a[2] += r.batt;
+        a[3] += sep; a[3] += r.grid;
+        a[4] += sep; a[4] += r.soc == 255 ? String("null") : String(r.soc);
+    }
+    return "{\"valid\":true,\"step\":" + String(PWR_STEP) + ",\"end\":" + String(end) +
+           ",\"pv\":[" + a[0] + "],\"load\":[" + a[1] + "],\"batt\":[" + a[2] +
+           "],\"grid\":[" + a[3] + "],\"soc\":[" + a[4] + "]}";
 }
 
 String outagesJson(uint16_t n) {
