@@ -639,6 +639,14 @@ static void applyGpdat0(const char* f[], const char* line) {
     case '5': mode = INVM_BATTERY; break;
     default:  mode = INVM_STANDBY; break;
     }
+    // Мощности из сети в протоколе нет — считаем по балансу: в режиме «от
+    // сети» сеть кормит нагрузку и заряд батареи, минус то, что дают панели.
+    // Раньше было «нагрузка + заряд от панелей», и ночной заряд от сети
+    // (22.10.2026: 20 А = RCC, 1000 Вт) в «сети» не появлялся вовсе — на
+    // схеме сеть 762 Вт уходила в нагрузку 762 Вт, а заряд 995 Вт брался
+    // ниоткуда. Ток заряда — от BMS: он точный и со знаком.
+    BmsState bms = stateSnapshot();
+    float battInW = bms.fresh && bms.current > 0 ? bms.voltage * bms.current : 0;
     invUpdate([&](InvState& v) {
         fresh(v);
         v.mode    = mode;
@@ -652,9 +660,10 @@ static void applyGpdat0(const char* f[], const char* line) {
         v.pvW     = num(f[20]);
         v.tempC   = (int16_t)num(f[21]);
         v.gridOn  = v.gridV > 50.0f;
-        // Мощности из сети в протоколе нет. В режиме «от сети» нагрузку и
-        // заряд кормит сеть; энергию статистика всё равно берёт со счётчика GLINE.
-        v.gridW   = mode == INVM_LINE ? v.outW + v.chgW : 0;
+        // Энергию за день статистика всё равно берёт со счётчика GLINE;
+        // это — мощность для схемы и графика.
+        float g = v.outW + battInW - v.pvW;
+        v.gridW   = mode == INVM_LINE && g > 0 ? g : 0;
     });
     stateUpdate([&](BmsState& b) {
         bmsFresh(b);
