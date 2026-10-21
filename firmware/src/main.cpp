@@ -4,6 +4,7 @@
 // Ядро 1: Wi-Fi, веб-сервер, терминал, демо-данные
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include "esp_bt.h"
 #include <WiFi.h>
 
 #include "state.h"
@@ -43,8 +44,23 @@ void setup() {
 
     // NimBLE работает только центральным: настройка сети идёт через точку
     // доступа, поэтому рекламировать себя модулю незачем.
-    NimBLEDevice::init(name.c_str());
-    NimBLEDevice::setPower(9);   // дБм
+    // У HS35 батарея штатная и говорит через инвертор: Bluetooth нужен только
+    // для привязанной батареи DALY. Без неё стек NimBLE и контроллер держали
+    // десятки килобайт внутренней памяти впустую, а на рукопожатии TLS бота
+    // свободной оставалось 140 байт (21.10.2026). Не привязана — Bluetooth не
+    // поднимаем и отдаём его память системе до перезагрузки.
+    bool ble = true;
+#if defined(TARGET_HS35)
+    ble = !cfg().bmsMac.isEmpty();
+#endif
+    if (ble) {
+        NimBLEDevice::init(name.c_str());
+        NimBLEDevice::setPower(9);   // дБм
+    } else {
+        esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+        Serial.println("[ble] батарея по Bluetooth не привязана — Bluetooth выключен, память отдана");
+    }
+    dalySetBle(ble);
 
     netStart();
     webStart();

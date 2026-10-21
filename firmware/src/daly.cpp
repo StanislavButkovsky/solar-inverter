@@ -27,6 +27,11 @@ static std::vector<BleFound> s_scanRes;
 static SemaphoreHandle_t     s_scanMtx = nullptr;
 
 static NimBLEAddress s_targetAddr;
+
+// Bluetooth поднят (на HS35 — только при привязанной батарее, см. main.cpp).
+static bool s_ble = true;
+void dalySetBle(bool on) { s_ble = on; }
+bool dalyBle() { return s_ble; }
 static String        s_targetName;
 static int           s_targetRssi = 0;
 static bool          s_haveTarget = false;
@@ -205,6 +210,7 @@ static bool looksLikeDaly(const NimBLEAdvertisedDevice* d) {
 
 std::vector<BleFound> dalyScan(uint8_t seconds) {
     std::vector<BleFound> out;
+    if (!s_ble) return out;                      // Bluetooth не поднят — искать нечем
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setActiveScan(true);
     scan->setInterval(100);
@@ -329,6 +335,7 @@ void dalyBind(const String& mac) {
     cfg().bmsMac = mac;
     cfgSave();
     Serial.printf("[ble] привязана батарея %s\n", mac.c_str());
+    if (!s_ble) Serial.println("[ble] Bluetooth на этой загрузке выключен — включится после перезагрузки");
     if (s_client && s_client->isConnected()) s_client->disconnect();
     s_haveTarget = false;
 }
@@ -389,7 +396,7 @@ static void dalyTask(void*) {
             // 5 с на 5 с занимать и радио, и эту задачу, из которой опрашивается
             // инвертор: на живой плате опрос шёл раз в 5 с вместо 2, а Wi-Fi
             // падал на совместной работе радио. Ищем, только если привязана.
-            if (cfg().bmsMac.isEmpty()) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+            if (!s_ble || cfg().bmsMac.isEmpty()) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
 #endif
             if (millis() - lastTry > 5000) {
                 lastTry = millis();

@@ -29,6 +29,8 @@ struct BleFound {
 };
 
 void   dalyStart();                      // поднять задачу BLE на ядре 0
+void   dalySetBle(bool on);              // Bluetooth не поднят — поиск и опрос батареи молчат
+bool   dalyBle();
 void   dalyReleaseFor(uint32_t minutes); // отпустить батарею официальному приложению
 bool   dalyIsReleased();
 uint32_t dalyReleaseLeftS();
