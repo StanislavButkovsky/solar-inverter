@@ -11,6 +11,9 @@ struct Config {
     uint16_t pollMs;     // пауза между запросами к BMS
     bool     apAfterSave; // одноразово: после смены сети поднять точку доступа,
                           // чтобы человек смог вернуться и узнать новый адрес
+    String   tgToken;     // токен бота Telegram от @BotFather; пусто — бот выключен
+    String   tgChat;      // привязанный чат; пусто — ждём /start с кодом
+    uint8_t  tgSocLow;    // порог «батарея разряжена», %
 };
 
 void    cfgInit();

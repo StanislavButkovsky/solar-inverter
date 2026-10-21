@@ -26,5 +26,6 @@ String statsJson(const String& range);    // day | week | month | year
 String outagesJson(uint16_t n);           // последние отключения, новые сверху
 bool   statsTimeValid();
 void   statsClear();
-void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня                      // стереть всё накопленное — необратимо
+void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня
+void   statsTodayOutages(uint32_t& seconds, uint16_t& count);                      // стереть всё накопленное — необратимо
 void   statsSetTime(uint32_t epoch);      // время из браузера, только если своего нет

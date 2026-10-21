@@ -13,6 +13,9 @@ void cfgInit() {
     g_cfg.webPass= prefs.getString("webpass", "");
     g_cfg.pollMs = prefs.getUShort("pollms", 300);
     g_cfg.apAfterSave = prefs.getBool("apafter", false);
+    g_cfg.tgToken = prefs.getString("tgtoken", "");
+    g_cfg.tgChat  = prefs.getString("tgchat", "");
+    g_cfg.tgSocLow = prefs.getUChar("tgsoclow", 20);
     if (g_cfg.pollMs < 100) g_cfg.pollMs = 100;
 }
 
@@ -26,10 +29,14 @@ void cfgSave() {
     prefs.putString("webpass",g_cfg.webPass);
     prefs.putUShort("pollms", g_cfg.pollMs);
     prefs.putBool("apafter", g_cfg.apAfterSave);
+    prefs.putString("tgtoken", g_cfg.tgToken);
+    prefs.putString("tgchat", g_cfg.tgChat);
+    prefs.putUChar("tgsoclow", g_cfg.tgSocLow);
 }
 
 void cfgFactoryReset() {
     prefs.clear();
     g_cfg = Config();
     g_cfg.pollMs = 300;
+    g_cfg.tgSocLow = 20;
 }

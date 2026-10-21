@@ -545,6 +545,35 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row">
     <div class="col c1"><div class="card">
+      <h2>Telegram <span id="tg_chip" class="chip gray">—</span></h2>
+      <div class="sub" id="tg_hint" style="margin-bottom:10px"></div>
+      <div id="tg_code" class="hidden" style="font-size:28px;font-weight:600;letter-spacing:.15em;margin:6px 0 10px"></div>
+      <label>Токен бота от @BotFather</label>
+      <input id="tg_token" type="password" autocomplete="off" placeholder="123456789:AA…">
+      <label>Батарея разряжена — ниже, %</label>
+      <input id="tg_low" type="number" min="5" max="90">
+      <label class="tg_passrow">Пароль модуля (тот же, что для прошивки)</label>
+      <input id="tg_pass" class="tg_passrow" type="password" autocomplete="current-password">
+      <div style="margin-top:12px">
+        <button class="wide accent" onclick="tgSave()">Сохранить</button>
+      </div>
+      <div style="margin-top:8px">
+        <button onclick="tgCmd('test=1')">Прислать проверку</button>
+        <button onclick="tgCmd('unbind=1')">Отвязать чат</button>
+      </div>
+      <div class="sub" id="tg_msg" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px;line-height:1.6">
+        Как завести бота: в Telegram найдите @BotFather → /newbot → имя → получите
+        токен и вставьте сюда. Потом отправьте своему боту /start и код, который
+        появится выше. Модулю нужен интернет через домашнюю сеть.<br>
+        Пишет: сеть пропала и вернулась, батарея ниже порога, авария, нет связи
+        с инвертором, сводка в 21:00. Команды: /status /today /outages.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
       <h2>Обновление прошивки</h2>
       <div class="sub" id="fw_ver" style="margin-bottom:10px">Сборка: —</div>
       <div id="ota_setpass">
@@ -820,6 +849,7 @@ function renderInv(v, b) {
 function render(s) {
   var b = s.bms, l = s.link;
   otaRender(s);
+  tgRender(s);
   if (s.inv) renderInv(s.inv, b);
 
   /* --- состояние связи, мелким под процентами --- */
@@ -1064,6 +1094,48 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- telegram */
+var tgLowSet = false;
+function tgRender(s) {
+  var t = s.tg;
+  if (!t) return;
+  var low = $("tg_low");
+  if (!tgLowSet && document.activeElement !== low) { low.value = t.low; tgLowSet = true; }
+  var rows = document.querySelectorAll(".tg_passrow");
+  for (var i = 0; i < rows.length; i++) rows[i].style.display = s.otaPass ? "" : "none";
+  show("tg_code", t.on && !t.chat && !!t.code);
+  if (!t.on) {
+    chip("tg_chip", "gray", "выключен");
+    $("tg_hint").innerHTML = "Вставьте токен бота, чтобы получать уведомления.";
+  } else if (!t.net) {
+    chip("tg_chip", "amber", "нет сети");
+    $("tg_hint").innerHTML = "Модуль не в домашней сети — до Telegram не достучаться.";
+  } else if (t.err) {
+    chip("tg_chip", "red", "ошибка");
+    $("tg_hint").innerHTML = t.err;
+  } else if (!t.chat) {
+    chip("tg_chip", "amber", "ждёт привязки");
+    $("tg_hint").innerHTML = "Отправьте боту " + (t.bot || "") + " команду /start и этот код:";
+    $("tg_code").innerHTML = "/start " + t.code;
+  } else {
+    chip("tg_chip", "green", "работает");
+    $("tg_hint").innerHTML = "Бот " + t.bot + " привязан к вашему чату.";
+  }
+}
+function tgCmd(q) {
+  get("/api/tg?" + q + "&pass=" + encodeURIComponent($("tg_pass").value), function (r) {
+    $("tg_msg").innerHTML = r.ok ? "готово" : (r.error || "не вышло");
+  }, function () { $("tg_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
+}
+function tgSave() {
+  var q = "low=" + encodeURIComponent($("tg_low").value);
+  var tok = $("tg_token").value;
+  if (tok) q += "&token=" + encodeURIComponent(tok);
+  tgCmd(q);
+  $("tg_token").value = "";
+  tgLowSet = false;
+}
+
 /* ----------------------------------------- обновление прошивки */
 var otaKnown = null;
 function otaRender(s) {

@@ -5,6 +5,7 @@
 #include "stats.h"
 #include "state.h"
 #include "rtc.h"
+#include "tg.h"
 #include <LittleFS.h>
 #include <sys/time.h>
 #include <time.h>
@@ -82,6 +83,12 @@ static int32_t  s_outSlot = -1;                       // ячейка текущ
 // ------------------------------------------------------------------ время
 
 bool statsTimeValid() { return time(nullptr) > 1700000000; }
+
+void statsTodayOutages(uint32_t& seconds, uint16_t& count) {
+    const DayRec& d = s_bound ? s_day : s_pend;
+    seconds = d.outageS;
+    count = d.outages;
+}
 
 void statsToday(float& pvWh, float& gridWh, float& loadWh) {
     const DayRec& d = s_bound ? s_day : s_pend;
@@ -242,6 +249,7 @@ static void outageStart(DayRec& D, HourRec& H) {
     uint32_t back = (millis() - s_lossSince) / 1000;
     D.outageS += back;
     H.outageS += back;
+    tgOutage(true, back);
     if (s_bound) {
         uint32_t now = (uint32_t)time(nullptr);
         OutRec r = { now - back, now, 1, {0} };
@@ -251,6 +259,7 @@ static void outageStart(DayRec& D, HourRec& H) {
 
 static void outageEnd() {
     s_inOut = false;
+    tgOutage(false, (millis() - s_outStartMs) / 1000);
     if (!s_bound) return;                 // без времени записать нечего, счётчики в дне есть
     uint32_t now = (uint32_t)time(nullptr);
     OutRec r;

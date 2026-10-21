@@ -10,6 +10,7 @@
 #include "stats.h"
 #include "rtc.h"
 #include "ota.h"
+#include "tg.h"
 #include <WiFi.h>
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -39,6 +40,7 @@ static void help() {
         "stats [day|week|month|year]  статистика в JSON, как отдаёт /api/stats\n"
         "stats clear           стереть всю статистику\n"
         "webpass <пароль>      пароль на обновление прошивки по сети (от 6 символов)\n"
+        "tg token <токен>      бот Telegram (пусто — выключить); tg test, tg unbind\n"
         "time <unix-время>     задать время, если NTP недоступен\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
@@ -53,6 +55,7 @@ static void printStatus() {
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
     Serial.printf("--- прошивка ---\n  сборка %s, обновление по сети: %s\n", fwBuild(),
                   otaPasswordSet() ? "включено" : "выключено (webpass <пароль>)");
+    Serial.printf("--- telegram ---\n  %s\n", tgStateJson().c_str());
     Serial.println("--- время ---");
     if (statsTimeValid()) {
         time_t loc = time(nullptr) + 3 * 3600;
@@ -116,6 +119,13 @@ static void exec(String line) {
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
     if (line == "stats clear") { statsClear(); return; }
+    if (line.startsWith("tg token")) {
+        String e = tgSetToken(line.substring(8));
+        Serial.println(e.length() ? e : String("токен сохранён, бот подключается — статус в status"));
+        return;
+    }
+    if (line == "tg test")   { tgTest(); Serial.println("проверка поставлена в очередь"); return; }
+    if (line == "tg unbind") { tgUnbind(); Serial.println("чат отвязан, новый код — в status"); return; }
     if (line.startsWith("webpass ")) {
         String pw = line.substring(8);
         pw.trim();

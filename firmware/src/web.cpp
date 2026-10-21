@@ -11,6 +11,7 @@
 #include "stats.h"
 #include "json.h"
 #include "ota.h"
+#include "tg.h"
 #include <Update.h>
 #include <WebServer.h>
 #if defined(USB_PROBE)
@@ -122,7 +123,8 @@ static String jsonState() {
     j += "\"wifi\":{\"ip\":\"" + jsonEsc(netIp()) + "\",\"status\":\"" + jsonEsc(netStatus()) +
          "\",\"ap\":" + String(netIsAp() ? "true" : "false") + "},";
     j += "\"sim\":" + String(simEnabled() ? "true" : "false");
-    j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false") + "}";
+    j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false");
+    j += ",\"tg\":" + tgStateJson() + "}";
     return j;
 }
 
@@ -310,6 +312,25 @@ void webStart() {
         cfgSave();
         otaStart();                                            // новый пароль — сразу в ArduinoOTA
         server.send(200, "application/json", "{\"ok\":true}");
+    });
+
+    // Telegram: токен, порог, проверка, отвязка. Если пароль на обновление
+    // задан, он нужен и здесь — токен даёт доступ к данным дома.
+    server.on("/api/tg", HTTP_GET, []() {
+        if (otaPasswordSet() && server.arg("pass") != cfg().webPass) {
+            server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"неверный пароль\"}");
+            return;
+        }
+        String err;
+        if (server.hasArg("token")) err = tgSetToken(server.arg("token"));
+        if (server.hasArg("low")) {
+            long low = server.arg("low").toInt();
+            if (low >= 5 && low <= 90) { cfg().tgSocLow = low; cfgSave(); } else err = "порог — от 5 до 90 %";
+        }
+        if (server.hasArg("test"))   tgTest();
+        if (server.hasArg("unbind")) tgUnbind();
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
     });
 
     // Статистика: day | week | month | year. Месяцы собираются из дней на лету.

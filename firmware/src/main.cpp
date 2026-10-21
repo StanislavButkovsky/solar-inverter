@@ -18,6 +18,7 @@
 #include "stats.h"
 #include "rtc.h"
 #include "ota.h"
+#include "tg.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -52,6 +53,7 @@ void setup() {
     dalyStart();
     rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
     statsStart();
+    tgStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
     // а разведка — она опознаёт устройство и сохраняет отчёт в NVS.
@@ -72,5 +74,6 @@ void loop() {
     statsLoop();
     rtcLoop();
     otaLoop();
+    tgLoop();
     delay(2);
 }
