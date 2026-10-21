@@ -116,7 +116,7 @@ struct InvState {
 
     // Приоритеты — коды G-ASCII; 0xFF — неизвестно (по умолчанию: раньше тут
     // стоял 0, и страница честно врала «сеть в приоритете» для HS35).
-    uint8_t  prioOut      = 0xFF;    // HS35 OPP: 2 PBG (проверено); 0 GRD, 1 PU — по порядку меню
+    uint8_t  prioOut      = 0xFF;    // HS35 OPP: 0 GRD, 1 PU, 2 PBG (сверено на живом инверторе)
     uint8_t  prioChg      = 0xFF;    // HS35 CHP: 0 PV, 1 PNG, 2 OPV (сверено на живом инверторе)
     uint8_t  battType     = 0xFF;    // 0 свинцовая, 1 заливная, 2 литиевая, 3 своя
 };
