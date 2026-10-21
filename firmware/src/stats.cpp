@@ -528,30 +528,36 @@ void statsClear() {
 }
 
 // Последние сутки по 5 минут: массивы по рядам, null — данных не было.
-// Сутки — 288 шагов, заканчивая текущими (неполными) 5 минутами.
-String powerJson() {
-    if (!s_bound) return "{\"valid\":false}";
+// Отдаётся по ряду за раз через emit(), а не одной строкой: пять рядов по
+// ~1,4 КБ плюс их склейка — это 7–14 КБ разом, а память на плате впритык.
+void powerWrite(void (*emit)(const String&)) {
+    if (!s_bound) { emit("{\"valid\":false}"); return; }
     uint32_t end = localNow() / PWR_STEP;
     static PwrRec buf[NPWR];
     memset(buf, 0, sizeof(buf));
     if (s_fs) readAt(F_PWR, 0, buf, sizeof(buf));
-    String a[5];
-    for (auto& x : a) x.reserve(1400);
-    for (uint32_t i = 0; i < NPWR; i++) {
-        uint32_t slot = end - (NPWR - 1) + i;
-        PwrRec r = slot == s_pSlot ? pwrCurrent() : buf[slot % NPWR];
-        bool have = r.slot == slot && r.n;
-        const char* sep = i ? "," : "";
-        if (!have) { for (auto& x : a) { x += sep; x += "null"; } continue; }
-        a[0] += sep; a[0] += r.pv;
-        a[1] += sep; a[1] += r.load;
-        a[2] += sep; a[2] += r.batt;
-        a[3] += sep; a[3] += r.grid;
-        a[4] += sep; a[4] += r.soc == 255 ? String("null") : String(r.soc);
+    PwrRec cur = pwrCurrent();
+    emit("{\"valid\":true,\"step\":" + String(PWR_STEP) + ",\"end\":" + String(end));
+    static const char* const KEYS[] = { "pv", "load", "batt", "grid", "soc" };
+    for (int k = 0; k < 5; k++) {
+        String a = String(",\"") + KEYS[k] + "\":[";
+        a.reserve(1500);
+        for (uint32_t i = 0; i < NPWR; i++) {
+            uint32_t slot = end - (NPWR - 1) + i;
+            const PwrRec& r = slot == s_pSlot ? cur : buf[slot % NPWR];
+            if (i) a += ',';
+            if (r.slot != slot || !r.n || (k == 4 && r.soc == 255)) { a += "null"; continue; }
+            switch (k) {
+            case 0: a += r.pv;   break;
+            case 1: a += r.load; break;
+            case 2: a += r.batt; break;
+            case 3: a += r.grid; break;
+            default: a += r.soc; break;
+            }
+        }
+        emit(a + "]");
     }
-    return "{\"valid\":true,\"step\":" + String(PWR_STEP) + ",\"end\":" + String(end) +
-           ",\"pv\":[" + a[0] + "],\"load\":[" + a[1] + "],\"batt\":[" + a[2] +
-           "],\"grid\":[" + a[3] + "],\"soc\":[" + a[4] + "]}";
+    emit("}");
 }
 
 String outagesJson(uint16_t n) {

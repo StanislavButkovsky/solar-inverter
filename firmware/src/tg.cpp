@@ -10,6 +10,7 @@
 #include <time.h>
 
 static const uint32_t LINK_LOST_MS = 5UL * 60 * 1000;
+static const uint32_t POLL_MS = 15000;           // команды доходят за 15 с
 
 static QueueHandle_t s_q = nullptr;              // char* из strdup, освобождает задача
 static volatile bool s_testReq = false;
@@ -225,7 +226,7 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
 
 static void poll(WiFiClientSecure& cli) {
     String out;
-    if (!api(cli, "getUpdates", "offset=" + String((long long)s_offset) + "&timeout=8&allowed_updates=%5B%22message%22%5D", out, 20)) return;
+    if (!api(cli, "getUpdates", "offset=" + String((long long)s_offset) + "&timeout=0&allowed_updates=%5B%22message%22%5D", out, 20)) return;
     int pos = 0;
     while ((pos = out.indexOf("\"update_id\":", pos)) >= 0) {
         int64_t id = atoll(out.c_str() + pos + 12);
@@ -247,7 +248,7 @@ static void task(void*) {
     cli.setCACert(TG_ROOT_CA);
     bool greeted = false;
     for (;;) {
-        if (token().isEmpty() || WiFi.status() != WL_CONNECTED) {
+        if (token().isEmpty() || WiFi.status() != WL_CONNECTED || otaBusy()) {   // при обновлении — молчим
             vTaskDelay(pdMS_TO_TICKS(3000));
             continue;
         }
@@ -267,7 +268,14 @@ static void task(void*) {
             send(cli, chat, msg);
             free(msg);
         }
-        poll(cli);                                       // долгий опрос, до 8 с
+        poll(cli);
+        // Соединение не держим: TLS занимает десятки килобайт внутренней
+        // памяти, а её на плате впритык (21.10.2026 минимум доходил до 752 байт,
+        // и обновление прошивки не нашло 4 КБ). Закрыли — память свободна до
+        // следующего опроса; пришло уведомление — очередь разбудит раньше.
+        cli.stop();
+        uint32_t t0 = millis();
+        while (millis() - t0 < POLL_MS && !uxQueueMessagesWaiting(s_q) && !s_testReq) vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 

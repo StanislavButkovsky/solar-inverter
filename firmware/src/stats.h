@@ -25,7 +25,7 @@ void   statsStart();
 void   statsLoop();                       // из loop(): сам решает, когда копить и писать
 String statsJson(const String& range);    // day | week | month | year
 String outagesJson(uint16_t n);           // последние отключения, новые сверху
-String powerJson();                       // мощности за сутки по 5 минут — для графика
+void   powerWrite(void (*emit)(const String&));   // мощности за сутки по 5 минут — по частям
 bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня

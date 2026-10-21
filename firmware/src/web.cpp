@@ -127,7 +127,8 @@ static String jsonState() {
     j += ",\"tg\":" + tgStateJson();
     // Память: если что-то течёт (TLS бота, строки), это видно здесь со временем.
     j += ",\"heap\":{\"free\":" + String(ESP.getFreeHeap()) + ",\"max\":" + String(ESP.getMaxAllocHeap()) +
-         ",\"min\":" + String(ESP.getMinFreeHeap()) + "},\"uptime\":" + String(millis() / 1000) + "}";
+         ",\"min\":" + String(ESP.getMinFreeHeap()) + ",\"psram\":" + String(ESP.getPsramSize()) +
+         ",\"psramFree\":" + String(ESP.getFreePsram()) + "},\"uptime\":" + String(millis() / 1000) + "}";
     return j;
 }
 
@@ -267,7 +268,7 @@ void webStart() {
     });
 #endif
 
-    // Обновление прошивки со страницы — кусками по 16 КБ.
+    // Обновление прошивки со страницы — кусками по 8 КБ.
     //
     // Одним файлом не выходило: Update стирает флеш блоками по 64 КБ, на это
     // время у ESP32 замирает и приём Wi-Fi, компьютер теряет пакеты, TCP
@@ -278,10 +279,11 @@ void webStart() {
     // записи; браузер ждёт ответа сколько нужно. Повтор куска безопасен.
     // Буфер постоянный: 21.10.2026 malloc(16 КБ) на живой плате не нашёл
     // куска такого размера — кучу дробят Wi-Fi, BLE, USB-хост и TLS бота.
-    static const size_t PART_MAX = 16384;
+    static const size_t PART_MAX = 8192;      // постоянный, поэтому скромный: память впритык
     static uint8_t  s_part[PART_MAX];
     static size_t   s_partLen = 0, s_otaNext = 0;
     static bool     s_partOk = false, s_otaOn = false;
+    static uint16_t s_rawCalls = 0;           // диагностика: сколько раз пришли данные куска
     auto otaAuth = []() -> bool {
         if (otaPasswordSet() && server.arg("pass") == cfg().webPass) return true;
         server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"неверный пароль\"}");
@@ -312,8 +314,13 @@ void webStart() {
             server.send(200, "application/json", "{\"ok\":false,\"retry\":true,\"next\":" + String(s_otaNext) + "}");
             return;
         }
-        if (off + s_partLen == s_otaNext) {                 // этот уже записан: ответ потерялся
+        if (s_partLen && off + s_partLen == s_otaNext) {    // этот уже записан: ответ потерялся
             server.send(200, "application/json", "{\"ok\":true,\"next\":" + String(s_otaNext) + "}");
+            return;
+        }
+        if (!s_partLen) {
+            server.send(200, "application/json", "{\"ok\":false,\"retry\":true,\"why\":\"пустой кусок\",\"calls\":" +
+                        String(s_rawCalls) + ",\"clen\":\"" + server.header("Content-Length") + "\"}");
             return;
         }
         if (off != s_otaNext) { otaFail("куски пришли не по порядку"); return; }
@@ -325,7 +332,9 @@ void webStart() {
         if (r.status == RAW_START) {
             s_partLen = 0;
             s_partOk = false;
+            s_rawCalls = 0;
         } else if (r.status == RAW_WRITE) {
+            s_rawCalls++;
             if (s_partLen + r.currentSize <= PART_MAX) memcpy(s_part + s_partLen, r.buf, r.currentSize);
             s_partLen += r.currentSize;
         } else if (r.status == RAW_END) {
@@ -391,9 +400,13 @@ void webStart() {
         server.send(200, "application/json; charset=utf-8", statsJson(r));
     });
 
+    // Поток по частям: ответ на ~7 КБ не собирается в памяти целиком.
     server.on("/api/power", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "application/json; charset=utf-8", powerJson());
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "application/json; charset=utf-8", "");
+        powerWrite([](const String& part) { server.sendContent(part); });
+        server.sendContent("");
     });
 
     server.on("/api/outages", HTTP_GET, []() {

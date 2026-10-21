@@ -1,9 +1,23 @@
 #include "ota.h"
 #include "cfg.h"
 #include <ArduinoOTA.h>
+#include <Update.h>
+#include "esp_ota_ops.h"
 #include "build_info.h"
 
 static bool s_started = false;
+static bool s_validated = false;
+
+// Откат при неудачном обновлении. Загрузчик собран с откатом, но ядро
+// Arduino помечает новую прошивку годной сразу при старте — откат случился
+// бы, только упади она в первые доли секунды. Теперь годной её объявляет
+// otaLoop(), когда она проработала VALID_AFTER_MS без сбоя; перезагрузка
+// раньше — и загрузчик вернёт прежнюю. Wi-Fi в критерий не входит: роутер
+// без питания не повод откатывать исправную прошивку.
+static const uint32_t VALID_AFTER_MS = 90000;
+extern "C" bool verifyRollbackLater() { return true; }
+
+bool otaBusy() { return Update.isRunning(); }
 
 const char* fwBuild() { return BUILD_INFO; }
 
@@ -28,4 +42,13 @@ void otaStart() {
 
 void otaLoop() {
     if (s_started) ArduinoOTA.handle();
+    if (!s_validated && millis() > VALID_AFTER_MS) {
+        s_validated = true;
+        esp_ota_img_states_t st;
+        if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK &&
+            st == ESP_OTA_IMG_PENDING_VERIFY) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            Serial.println("[ota] новая прошивка проработала 90 с — помечена годной");
+        }
+    }
 }

@@ -1214,7 +1214,7 @@ function xhrJson(method, url, body, ms, cb, fail) {
   x.send(body);
 }
 
-// Прошивка уходит кусками по 16 КБ: модуль принимает кусок в память и
+// Прошивка уходит кусками (размер называет модуль, 8 КБ): модуль принимает кусок в память и
 // пишет во флеш уже после приёма. Одним файлом загрузка рвалась — пока
 // модуль стирает флеш, он не принимает данные дольше, чем ждёт сервер.
 function otaUpload() {
@@ -1257,7 +1257,7 @@ function otaUpload() {
   $("ota_btn").disabled = true;
   $("ota_msg").innerHTML = "начинаю…";
   xhrJson("GET", "/api/ota/begin?size=" + f.size + "&pass=" + pw, null, 15000, function (r) {
-    if (r.ok) part(0, r.part || 16384, 0); else fail(r.error || "модуль отказал");
+    if (r.ok) part(0, r.part || 8192, 0); else fail(r.error || "модуль отказал");
   }, fail);
 }
 

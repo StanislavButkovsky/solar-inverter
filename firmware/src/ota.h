@@ -14,3 +14,4 @@ void        otaStart();       // ArduinoOTA — если пароль задан
 void        otaLoop();
 bool        otaPasswordSet();
 const char* fwBuild();        // дата и время сборки — видно, что обновление встало
+bool        otaBusy();        // идёт приём прошивки — тяжёлым задачам лучше подождать
