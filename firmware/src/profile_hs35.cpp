@@ -356,6 +356,7 @@ static void applyF(const char* f[]) {
 static void applySetting(Kind k, long code) {
     invUpdate([&](InvState& v) {
         if (k == K_OPR && code >= 0 && code <= 2) v.prioOut = code;
+        // CHP у HS35: 0 PV, 1 PNG, 2 OPV — сверено переключением с панели 21.10.2026.
         if (k == K_CPR && code >= 0 && code <= 3) v.prioChg = code;
         if (k == K_TBAT && code >= 0 && code <= 3) v.battType = code;
     });
