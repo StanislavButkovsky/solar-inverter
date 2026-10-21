@@ -1198,11 +1198,12 @@ function setPass() {
 }
 // Запрос с долгим ожиданием: проверка образа в конце бывает дольше 4 с,
 // которые даёт get(). body — кусок файла или null.
-function xhrJson(method, url, body, ms, cb, fail) {
+function xhrJson(method, url, body, ms, cb, fail, hdrs) {
   var x = new XMLHttpRequest(), done = false;
   function bad(why) { if (done) return; done = true; fail(why); }
   x.open(method, url, true);
   x.timeout = ms;
+  for (var k in (hdrs || {})) x.setRequestHeader(k, hdrs[k]);
   x.onload = function () {
     if (done) return; done = true;
     var r = {};
@@ -1227,7 +1228,8 @@ function otaUpload() {
   }
   function part(off, size, tries) {
     if (off >= f.size) { finish(); return; }
-    xhrJson("POST", "/api/ota/part?off=" + off + "&pass=" + pw, f.slice(off, off + size), 30000, function (r) {
+    // Смещение и пароль — в заголовках: у запроса с телом модуль адрес не разбирает.
+    xhrJson("POST", "/api/ota/part", f.slice(off, off + size), 30000, function (r) {
       if (r.ok) {
         $("ota_msg").innerHTML = "загрузка " + Math.round(100 * r.next / f.size) + " %";
         part(r.next, size, 0);
@@ -1239,7 +1241,7 @@ function otaUpload() {
     }, function (why) {
       if (tries < 3) setTimeout(function () { part(off, size, tries + 1); }, 1500);
       else fail(why);
-    });
+    }, { "X-Off": String(off), "X-Pass": pw, "Content-Type": "application/octet-stream" });
   }
   function finish() {
     $("ota_msg").innerHTML = "проверяю образ…";

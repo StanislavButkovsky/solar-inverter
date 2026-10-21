@@ -284,8 +284,23 @@ void webStart() {
     static size_t   s_partLen = 0, s_otaNext = 0;
     static bool     s_partOk = false, s_otaOn = false;
     static uint16_t s_rawCalls = 0;           // диагностика: сколько раз пришли данные куска
-    auto otaAuth = []() -> bool {
-        if (otaPasswordSet() && server.arg("pass") == cfg().webPass) return true;
+    // У запросов с сырым телом WebServer не разбирает параметры адреса —
+    // arg() отдаёт оставшиеся от прошлого запроса (21.10.2026: смещение куска
+    // всегда читалось как 0, пароль пропадал). Поэтому у кусков смещение и
+    // пароль — в заголовках X-Off и X-Pass; пароль закодирован, как в адресе.
+    static const char* HDRS[] = { "X-Off", "X-Pass" };
+    server.collectHeaders(HDRS, 2);
+    auto otaPass = []() -> String {
+        if (!server.hasHeader("X-Pass")) return server.arg("pass");
+        String in = server.header("X-Pass"), out;
+        for (size_t i = 0; i < in.length(); i++) {
+            if (in[i] == '%' && i + 2 < in.length()) { out += (char)strtol(in.substring(i + 1, i + 3).c_str(), nullptr, 16); i += 2; }
+            else out += in[i];
+        }
+        return out;
+    };
+    auto otaAuth = [otaPass]() -> bool {
+        if (otaPasswordSet() && otaPass() == cfg().webPass) return true;
         server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"неверный пароль\"}");
         return false;
     };
@@ -309,7 +324,7 @@ void webStart() {
     server.on("/api/ota/part", HTTP_POST, [otaAuth, otaFail]() {
         if (!otaAuth()) return;
         if (!s_otaOn) { otaFail("загрузка не начата"); return; }
-        size_t off = strtoul(server.arg("off").c_str(), nullptr, 10);
+        size_t off = strtoul(server.header("X-Off").c_str(), nullptr, 10);
         if (!s_partOk) {                                    // кусок не дошёл — пусть пришлют ещё раз
             server.send(200, "application/json", "{\"ok\":false,\"retry\":true,\"next\":" + String(s_otaNext) + "}");
             return;
