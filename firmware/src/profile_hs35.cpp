@@ -139,6 +139,11 @@ static void wFinish(bool ok, const String& msg) {
 }
 
 String invSetSetting(uint8_t what, uint8_t code) {
+    // OPP не пишем: 21.10.2026 запись OPRdd на живом HS35 давала ACK и даже
+    // перечитывалась «правильным» кодом, а на экране вставал другой режим —
+    // выбрали PBG, встал GRD. Чтение OPR?? при этом верное (сверено с
+    // панелью). Переключать OPP — только с панели инвертора.
+    if (what == 0) return "OPP с модуля не переключается — запись у HS35 ставит не тот режим; переключайте с панели инвертора";
     if (what > 1 || code > 2) return "такого значения нет";
     if (s_w == W_QUEUED || s_w == W_SENT || s_w == W_READ || s_w == W_VERIFY) return "предыдущее переключение ещё идёт";
     s_wWhat = what;
