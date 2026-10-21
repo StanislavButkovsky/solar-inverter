@@ -124,7 +124,10 @@ static String jsonState() {
          "\",\"ap\":" + String(netIsAp() ? "true" : "false") + "},";
     j += "\"sim\":" + String(simEnabled() ? "true" : "false");
     j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false");
-    j += ",\"tg\":" + tgStateJson() + "}";
+    j += ",\"tg\":" + tgStateJson();
+    // Память: если что-то течёт (TLS бота, строки), это видно здесь со временем.
+    j += ",\"heap\":{\"free\":" + String(ESP.getFreeHeap()) + ",\"max\":" + String(ESP.getMaxAllocHeap()) +
+         ",\"min\":" + String(ESP.getMinFreeHeap()) + "},\"uptime\":" + String(millis() / 1000) + "}";
     return j;
 }
 
@@ -273,8 +276,10 @@ void webStart() {
     // 21.10.2026 загрузка рвалась на 64 и 786 КБ. Теперь кусок сначала целиком
     // ложится в память, во флеш пишется уже после приёма, а ответ уходит после
     // записи; браузер ждёт ответа сколько нужно. Повтор куска безопасен.
+    // Буфер постоянный: 21.10.2026 malloc(16 КБ) на живой плате не нашёл
+    // куска такого размера — кучу дробят Wi-Fi, BLE, USB-хост и TLS бота.
     static const size_t PART_MAX = 16384;
-    static uint8_t* s_part = nullptr;
+    static uint8_t  s_part[PART_MAX];
     static size_t   s_partLen = 0, s_otaNext = 0;
     static bool     s_partOk = false, s_otaOn = false;
     auto otaAuth = []() -> bool {
@@ -292,8 +297,6 @@ void webStart() {
         if (!otaAuth()) return;
         size_t size = strtoul(server.arg("size").c_str(), nullptr, 10);
         if (Update.isRunning()) Update.abort();
-        if (!s_part) s_part = (uint8_t*)malloc(PART_MAX);
-        if (!s_part) { otaFail("не хватило памяти под кусок"); return; }
         if (!Update.begin(size ? size : UPDATE_SIZE_UNKNOWN)) { otaFail(Update.errorString()); return; }
         s_otaNext = 0;
         s_otaOn = true;
@@ -323,10 +326,10 @@ void webStart() {
             s_partLen = 0;
             s_partOk = false;
         } else if (r.status == RAW_WRITE) {
-            if (s_part && s_partLen + r.currentSize <= PART_MAX) memcpy(s_part + s_partLen, r.buf, r.currentSize);
+            if (s_partLen + r.currentSize <= PART_MAX) memcpy(s_part + s_partLen, r.buf, r.currentSize);
             s_partLen += r.currentSize;
         } else if (r.status == RAW_END) {
-            s_partOk = s_part && s_partLen <= PART_MAX;
+            s_partOk = s_partLen <= PART_MAX;
         } else {
             s_partOk = false;
         }

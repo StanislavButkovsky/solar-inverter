@@ -55,6 +55,9 @@ static void printStatus() {
     Serial.printf("  %s\n  адрес: http://%s\n", netStatus().c_str(), netIp().c_str());
     Serial.printf("--- прошивка ---\n  сборка %s, обновление по сети: %s\n", fwBuild(),
                   otaPasswordSet() ? "включено" : "выключено (webpass <пароль>)");
+    Serial.printf("  память: свободно %u, крупнейший кусок %u, минимум за работу %u байт; работает %lu мин\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap(),
+                  (unsigned long)(millis() / 60000));
     Serial.printf("--- telegram ---\n  %s\n", tgStateJson().c_str());
     Serial.println("--- время ---");
     if (statsTimeValid()) {
