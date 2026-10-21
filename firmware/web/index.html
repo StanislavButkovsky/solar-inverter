@@ -601,10 +601,16 @@ body.light pre.rep { background: #f2f4f8; }
         переключения модуль перечитывает настройку и пишет, встала ли она.
       </div>
       <label>Приоритет работы (OPP) — сейчас <b id="set_opp_now">—</b></label>
+      <select id="set_opp">
+        <option value="0">GRD — сеть в приоритете</option>
+        <option value="1">PU — солнце в приоритете</option>
+        <option value="2">PBG — солнце → батарея → сеть</option>
+      </select>
       <div class="sub" style="margin-top:4px">
-        Переключается только с панели инвертора: запись с модуля у HS35 ставит
-        не тот режим (выбирали PBG — вставал GRD). Показывается верно.
+        После PBG инвертор может ещё пару минут работать от сети и только потом
+        перейти на батарею — это его выдержка, не ошибка.
       </div>
+      <div style="margin-top:8px"><button class="wide" onclick="invSet('opp')">Переключить OPP</button></div>
       <label>Приоритет зарядки (CHP) — сейчас <b id="set_chp_now">—</b></label>
       <select id="set_chp">
         <option value="0">PV — от солнца в приоритете</option>

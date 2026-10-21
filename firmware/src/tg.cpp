@@ -4,6 +4,7 @@
 #include "state.h"
 #include "stats.h"
 #include "ota.h"
+#include "profile.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -200,6 +201,61 @@ static String field(const String& j, const char* key, int from) {
     return e < 0 ? String("") : j.substring(p, e);
 }
 
+// Проверка записи OPP с телефона: человек стоит у инвертора, шлёт /opptest,
+// модуль сам пишет PU, потом PBG и раз в секунду записывает, что инвертор
+// держит, — с экраном сверяется глазами. Им 21.10.2026 запись и сверили.
+static volatile bool s_oppReq = false;
+static const char* const OPP_N[] = { "GRD", "PU", "PBG" };
+
+static String oppNow(const InvState& v) {
+    String o = v.prioOut < 3 ? OPP_N[v.prioOut] : "?";
+    const char* m = v.mode == INVM_LINE ? "сеть" : v.mode == INVM_BATTERY ? "батарея" :
+                    v.mode == INVM_BYPASS ? "обход" : v.mode == INVM_STANDBY ? "ожидание" : "?";
+    return o + "/" + m;
+}
+
+static void oppTestLoop() {
+    // шаги: 0 нет теста; 1 пауза перед PU; 2 смотрим PU; 3 пауза перед PBG; 4 смотрим PBG
+    static uint8_t step = 0;
+    static uint32_t t0 = 0, lastS = 0;
+    static String log, prev;
+    if (s_oppReq && step == 0) {
+        s_oppReq = false;
+        InvState v = invSnapshot();
+        step = 1; t0 = millis();
+        tgNotify("🧪 Тест OPP. Сейчас: " + oppNow(v) + "\nЧерез 30 с ставлю PU — смотрите на экран инвертора.");
+        return;
+    }
+    s_oppReq = false;
+    if (step == 0) return;
+    uint32_t el = millis() - t0;
+    if (step == 1 || step == 3) {
+        if (el < 30000) return;
+        uint8_t code = step == 1 ? 1 : 2;
+        String e = invSetSetting(0, code);
+        if (!e.isEmpty()) { tgNotify("🧪 Тест OPP прерван: " + e); step = 0; return; }
+        step++; t0 = millis(); lastS = 0; prev = ""; log = "";
+        tgNotify(String("🧪 Записал ") + OPP_N[code] + ". Смотрю 60 с, раз в секунду.");
+        return;
+    }
+    if (millis() - lastS >= 1000) {                      // шаги 2 и 4
+        lastS = millis();
+        String n = oppNow(invSnapshot());
+        if (n != prev) { log += "\n+" + String(el / 1000) + " с: " + n; prev = n; }
+    }
+    if (el < 60000) return;
+    const char* what = step == 2 ? "PU" : "PBG";
+    tgNotify(String("🧪 После записи ") + what + " (OPP/работа):" + log);
+    if (step == 2) {
+        step = 3; t0 = millis();
+        tgNotify("🧪 Через 30 с ставлю PBG — смотрите на экран.");
+    } else {
+        step = 0;
+        tgNotify("🧪 Тест OPP закончен. Запомните, что показывал экран после PU и после PBG. "
+                 "Если сейчас не PBG — поставьте с панели.");
+    }
+}
+
 static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     text.trim();
     int sp = text.indexOf(' ');
@@ -225,6 +281,7 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     if (cmd == "/status" || cmd == "/start") send(cli, chat, statusText());
     else if (cmd == "/today")   send(cli, chat, todayText());
     else if (cmd == "/outages") send(cli, chat, outagesText());
+    else if (cmd == "/opptest") { s_oppReq = true; send(cli, chat, "Тест OPP принят — начну в течение пары секунд."); }
     else                        send(cli, chat, HELP);
 }
 
@@ -286,6 +343,7 @@ static void task(void*) {
 // ------------------------------------------------------------------ пороги
 
 void tgLoop() {
+    oppTestLoop();
     static uint32_t last = 0, lastFresh = 0;
     static bool lowSent = false, linkSent = false;
     static uint8_t prevFault = 0;
