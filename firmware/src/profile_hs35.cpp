@@ -18,6 +18,7 @@
 
 #include "profile.h"
 #include "state.h"
+#include "hs35_settings.h"
 #include <Preferences.h>
 #include <stdlib.h>
 #include <math.h>
@@ -36,6 +37,8 @@ enum Kind : uint8_t {
     K_OPR, K_CPR, K_OPM, K_TBAT,                 // настройки: чтение
     K_COUNT,
     K_WOPR = 0xF0, K_WCPR,                       // запись OPRdd / CPRdd — в очереди, не в круге
+    K_WGEN,                                      // запись остальных настроек (hs35_settings.h)
+    // 0x80 + i — чтение настройки SETS[i]; 0x80 + SET_TE/SET_TD — флаги TE?/TD?
     K_ACK = 0xFC, K_SHORT = 0xFD, K_NAK = 0xFE, K_UNKNOWN = 0xFF
 };
 static const char* const NAME[K_COUNT] = {
@@ -74,10 +77,16 @@ static void trace(const String& line) {
     if (s_tLen < 40) s_tLen++; else s_tHead = (s_tHead + 1) % 40;
 }
 
+static const uint8_t SET_TE = 100, SET_TD = 101;     // флаги: включённые и выключенные
+
 static const char* kname(uint8_t k) {
     if (k < K_COUNT) return NAME[k];
     if (k == K_WOPR) return "запись OPR";
     if (k == K_WCPR) return "запись CPR";
+    if (k == K_WGEN) return "запись настройки";
+    if (k >= 0x80 && k < 0x80 + NSETS) return SETS[k - 0x80].rd ? SETS[k - 0x80].rd : "?";
+    if (k == 0x80 + SET_TE) return "TE?";
+    if (k == 0x80 + SET_TD) return "TD?";
     return "?";
 }
 
@@ -131,6 +140,9 @@ static uint32_t s_wMs = 0, s_wSeq = 0;
 static bool     s_wOk = false;
 static String   s_wMsg;
 
+static bool wBusy();
+static bool gBusy();
+
 static void wFinish(bool ok, const String& msg) {
     s_wOk = ok;
     s_wMsg = String(W_NAME[s_wWhat]) + " → " + W_OPT[s_wWhat][s_wCode] + ": " + msg;
@@ -143,12 +155,308 @@ String invSetSetting(uint8_t what, uint8_t code) {
     // при чтении. После PBG инвертор ещё пару минут работает от сети и лишь
     // потом уходит на батарею — это не откат, а его собственная выдержка.
     if (what > 1 || code > 2) return "такого значения нет";
-    if (s_w == W_QUEUED || s_w == W_SENT || s_w == W_READ || s_w == W_VERIFY) return "предыдущее переключение ещё идёт";
+    if (wBusy() || gBusy()) return "предыдущее переключение ещё идёт";
     s_wWhat = what;
     s_wCode = code;
     s_wMsg = "";
     s_w = W_QUEUED;
     return "";
+}
+
+// ------------------------------------------------------------------ остальные настройки
+
+// Таблица — hs35_settings.h. Читаются вставкой в круг: каждая четвёртая
+// команда — одна настройка, вся таблица обходится примерно за минуту.
+// Ответ у всех одинакового вида — «(56.4», «(030», «(SIQ», — поэтому он
+// приписывается по голове очереди отправленных, как «(dd» у OPR??.
+// Настройка, на которую инвертор дважды ответил NAK, больше не спрашивается.
+//
+// Запись — только сверенной с экраном (отметка на странице, в NVS),
+// в пределах руководства и с перечитыванием, как у OPP/CHP.
+static float    s_sv[NSETS];             // значение в единицах страницы; NAN — неизвестно
+static int8_t   s_sup[NSETS];            // −1 неизвестно, 0 инвертор не знает, 1 отвечает
+static uint8_t  s_nak[NSETS];
+static String   s_te, s_td;              // буквы включённых и выключенных флагов
+static bool     s_teKnown = false, s_tdKnown = false;
+static uint8_t  s_teNak = 0, s_tdNak = 0;
+static uint64_t s_ver = 0;               // сверено с панелью — бит на настройку
+static bool     s_setInit = false;
+static uint8_t  s_setPos = 0, s_setTick = 0;
+
+static int8_t setIdx(const char* id) {
+    for (uint8_t i = 0; i < NSETS; i++) if (!strcmp(SETS[i].id, id)) return i;
+    return -1;
+}
+static float setVal(const char* id) { int8_t i = setIdx(id); return i < 0 ? NAN : s_sv[i]; }
+
+static void setInit() {
+    if (s_setInit) return;
+    s_setInit = true;
+    for (uint8_t i = 0; i < NSETS; i++) { s_sv[i] = NAN; s_sup[i] = -1; s_nak[i] = 0; }
+    if (s_nvs.begin("invprof", true)) { s_ver = s_nvs.getULong64("ver", 0); s_nvs.end(); }
+}
+
+// OPM?? и TBAT? и так в основном круге — их таблица не спрашивает отдельно.
+static bool inCycle(uint8_t i) { return !strcmp(SETS[i].id, "mod") || !strcmp(SETS[i].id, "bat"); }
+
+static float setScale(uint8_t i) { return SETS[i].scale > 0 ? SETS[i].scale : 1; }
+
+// Следующая настройка для круга: команда и что положить в очередь.
+static const char* nextSetRead(uint8_t& kind) {
+    setInit();
+    for (uint8_t tries = 0; tries < NSETS + 2; tries++) {
+        uint8_t i = s_setPos;
+        s_setPos = (s_setPos + 1) % (NSETS + 2);
+        if (i == NSETS)     { if (s_teNak < 2) { kind = 0x80 + SET_TE; return "TE?"; } continue; }
+        if (i == NSETS + 1) { if (s_tdNak < 2) { kind = 0x80 + SET_TD; return "TD?"; } continue; }
+        if (!SETS[i].rd || inCycle(i) || s_sup[i] == 0) continue;
+        kind = 0x80 + i;
+        return SETS[i].rd;
+    }
+    return nullptr;
+}
+
+static void flagsUpdate() {
+    for (uint8_t i = 0; i < NSETS; i++) {
+        if (SETS[i].kind != SK_FLAG) continue;
+        bool on = s_teKnown && s_te.indexOf(SETS[i].flag) >= 0;
+        bool off = s_tdKnown && s_td.indexOf(SETS[i].flag) >= 0;
+        if (on || off) { s_sv[i] = on ? 1 : 0; s_sup[i] = 1; }
+        else if (s_teKnown && s_tdKnown) s_sup[i] = 0;          // буквы нет ни там, ни там
+    }
+}
+
+// Запись: своё состояние, но общие с OPP/CHP «занято» и итог (s_wSeq/s_wMsg),
+// чтобы журнал и бот узнавали о ней тем же путём.
+enum GState : uint8_t { G_IDLE, G_QUEUED, G_SENT, G_READ, G_VERIFY, G_DONE };
+static volatile GState s_g = G_IDLE;
+static uint8_t  s_gIdx = 0;
+static float    s_gWant = 0;
+static char     s_gCmd[20];
+static uint32_t s_gMs = 0;
+
+static bool gBusy() { return s_g == G_QUEUED || s_g == G_SENT || s_g == G_READ || s_g == G_VERIFY; }
+static bool wBusy() { return s_w == W_QUEUED || s_w == W_SENT || s_w == W_READ || s_w == W_VERIFY; }
+
+static String fmtVal(uint8_t i, float v) {
+    const SetDef& d = SETS[i];
+    if (isnan(v)) return "—";
+    if (d.kind == SK_FLAG) return v > 0.5f ? "вкл." : "выкл.";
+    if (d.kind == SK_ENUM && d.opts) {
+        String o = d.opts;
+        int n = (int)lroundf(v), from = 0;
+        for (int k = 0; k < n && from >= 0; k++) { from = o.indexOf('|', from); if (from >= 0) from++; }
+        if (from < 0) return String(n);
+        int to = o.indexOf('|', from);
+        String r = o.substring(from, to < 0 ? o.length() : to);
+        int dash = r.indexOf(" — ");
+        return dash > 0 ? r.substring(0, dash) : r;
+    }
+    String r = String(v, (unsigned)d.dec);
+    r.replace('.', ',');
+    return d.unit[0] ? r + " " + d.unit : r;
+}
+
+static void gFinish(bool ok, const String& msg) {
+    const SetDef& d = SETS[s_gIdx];
+    s_wOk = ok;
+    s_wMsg = String(d.panel[0] ? d.panel : d.id) + " → " + fmtVal(s_gIdx, s_gWant) + ": " + msg;
+    s_g = G_DONE;
+    s_wSeq++;
+}
+
+static void applySetValue(uint8_t idx, const char* text) {
+    setInit();
+    if (idx == SET_TE || idx == SET_TD) {
+        String t = text;
+        t.trim();
+        if (idx == SET_TE) { s_te = t; s_teKnown = true; } else { s_td = t; s_tdKnown = true; }
+        flagsUpdate();
+        if (s_g == G_VERIFY && SETS[s_gIdx].kind == SK_FLAG && idx == SET_TE) {
+            bool on = s_te.indexOf(SETS[s_gIdx].flag) >= 0;
+            if (on == (s_gWant > 0.5f)) gFinish(true, "встало");
+            else gFinish(false, "инвертор ответил ACK, но флаг не сменился");
+        }
+        return;
+    }
+    if (idx >= NSETS || !text[0] || (!isdigit((uint8_t)text[0]) && text[0] != '-')) return;
+    float v = strtof(text, nullptr) / setScale(idx);
+    s_sv[idx] = v;
+    s_sup[idx] = 1;
+    if (s_g == G_VERIFY && s_gIdx == idx) {
+        float tol = SETS[idx].dec ? 0.05f : 0.5f;
+        if (fabsf(v - s_gWant) <= tol) gFinish(true, "встало");
+        else gFinish(false, "инвертор ответил ACK, но значение " + fmtVal(idx, v));
+    }
+}
+
+static void setNak(uint8_t idx) {
+    setInit();
+    if (idx == SET_TE) { if (s_teNak < 2) s_teNak++; return; }
+    if (idx == SET_TD) { if (s_tdNak < 2) s_tdNak++; return; }
+    if (idx >= NSETS) return;
+    if (++s_nak[idx] >= 2) s_sup[idx] = 0;
+    if (s_g == G_VERIFY && s_gIdx == idx) gFinish(false, "инвертор не ответил на перечитывание");
+}
+
+// Пределы для этой настройки сейчас — по типу батареи и режиму MOD.
+// Пустая строка — можно; иначе причина, почему нельзя.
+static String setLimits(uint8_t i, float& lo, float& hi) {
+    const SetDef& d = SETS[i];
+    lo = d.lo; hi = d.hi;
+    float bt = setVal("bat"), mod = setVal("mod");
+    switch (d.rule) {
+    case SR_READONLY: return "только показываем";
+    case SR_BATTV:
+        if (isnan(bt)) return "тип батареи ещё не прочитан";
+        if (bt < 1.5f) return "у AGM и FLD инвертор это напряжение менять не даёт";
+        if (bt > 2.5f && (d.cLo || d.cHi)) { lo = d.cLo; hi = d.cHi; }
+        break;
+    case SR_EQ:
+        if (isnan(bt)) return "тип батареи ещё не прочитан";
+        if (fabsf(bt - 2) < 0.5f && d.kind != SK_FLAG) return "у литиевой батареи выравнивание не используется";
+        break;
+    case SR_LLV:
+        if (isnan(mod)) return "режим MOD ещё не прочитан";
+        if (mod > 0.5f) { lo = 170; hi = 200; }
+        break;
+    default: break;
+    }
+    if (!strcmp(d.id, "lhv")) {
+        if (isnan(mod)) return "режим MOD ещё не прочитан";
+        if (mod > 0.5f) return "меняется только в режиме APP";
+    }
+    return "";
+}
+
+// Почему нельзя писать вообще (без учёта значения) — для страницы.
+static String setWhyNot(uint8_t i) {
+    float lo, hi;
+    String e = setLimits(i, lo, hi);
+    if (e.length()) return e;
+    if (!SETS[i].wr && SETS[i].kind != SK_FLAG) return "только показываем";
+    if (s_sup[i] == 0) return "инвертор эту настройку не знает";
+    if (s_sup[i] < 0 || isnan(s_sv[i])) return "ещё не прочитана";
+    if (!(s_ver >> i & 1)) return "сначала сверьте с экраном инвертора (программа " + String(SETS[i].prog) + ")";
+    return "";
+}
+
+// Взаимные условия: заряд выше поддерживающего, отключение ниже
+// предупреждения и т. д. Неизвестное соседнее значение не мешает.
+static String setCross(const char* id, float v) {
+    struct Pair { const char* lowId; const char* highId; const char* text; };
+    static const Pair P[] = {
+        { "bfl", "bcv", "поддерживающий заряд должен быть ниже основного" },
+        { "bau", "bal", "отключение батареи должно быть ниже предупреждения" },
+        { "bau", "btg", "отключение батареи должно быть ниже порога ухода на сеть" },
+        { "btg", "btb", "уход на сеть должен быть ниже возврата на батарею" },
+        { "stg", "stb", "уход на сеть по заряду должен быть ниже возврата на батарею" },
+        { "bsu", "stg", "отключение по заряду должно быть ниже ухода на сеть" },
+    };
+    for (const Pair& q : P) {
+        if (!strcmp(id, q.lowId)) { float o = setVal(q.highId); if (!isnan(o) && v >= o) return q.text; }
+        if (!strcmp(id, q.highId)) { float o = setVal(q.lowId); if (!isnan(o) && v <= o) return q.text; }
+    }
+    return "";
+}
+
+String invSettingWrite(const String& id, const String& value) {
+    setInit();
+    int8_t i = setIdx(id.c_str());
+    if (i < 0) return "нет такой настройки";
+    const SetDef& d = SETS[i];
+    String e = setWhyNot(i);
+    if (e.length()) return e;
+    if (gBusy() || wBusy()) return "предыдущее переключение ещё идёт";
+    if (!invSnapshot().fresh) return "инвертор сейчас не на связи";
+    String t = value;
+    t.trim();
+    t.replace(',', '.');
+    if (!t.length()) return "пустое значение";
+    float v = t.toFloat();
+    float lo, hi;
+    setLimits(i, lo, hi);
+    if (d.kind == SK_FLAG) {
+        if (v != 0 && v != 1) return "только вкл. или выкл.";
+        if (d.rule == SR_EQ && v > 0.5f && fabsf(setVal("bat") - 2) < 0.5f)
+            return "у литиевой батареи выравнивающая зарядка вредна — не включаю";
+        snprintf(s_gCmd, sizeof(s_gCmd), "T%c%c", v > 0.5f ? 'E' : 'D', d.flag);
+    } else {
+        if (d.list) {
+            bool ok = false;
+            String l = String("|") + d.list + "|";
+            if (l.indexOf("|" + String((int)lroundf(v)) + "|") >= 0 && fabsf(v - lroundf(v)) < 0.01f) ok = true;
+            if (!ok) return String("допустимо: ") + String(d.list).substring(0) + " " + d.unit;
+        } else {
+            if (v < lo - 0.001f || v > hi + 0.001f)
+                return "допустимо " + fmtVal(i, lo) + " … " + fmtVal(i, hi) + " (по руководству)";
+            float steps = (v - lo) / d.step;
+            if (fabsf(steps - lroundf(steps)) > 0.01f) return "шаг " + String(d.step, (unsigned)d.dec) + " " + d.unit;
+        }
+        if (d.kind == SK_ENUM && (v < d.lo || v > d.hi)) return "такого варианта нет";
+        String c = setCross(d.id, v);
+        if (c.length()) return c;
+        float raw = v * setScale(i);
+        if (d.width) snprintf(s_gCmd, sizeof(s_gCmd), "%s%0*ld", d.wr, d.width, (long)lroundf(raw));
+        else         snprintf(s_gCmd, sizeof(s_gCmd), "%s%.*f", d.wr, d.dec, raw);
+    }
+    if (fabsf(v - s_sv[i]) < 0.001f) return "уже стоит " + fmtVal(i, v);
+    s_gIdx = i;
+    s_gWant = v;
+    s_wMsg = "";
+    s_g = G_QUEUED;
+    return "";
+}
+
+String invSettingVerify(const String& id, bool on) {
+    setInit();
+    int8_t i = setIdx(id.c_str());
+    if (i < 0) return "нет такой настройки";
+    if (on && isnan(s_sv[i])) return "ещё не прочитана — сверять не с чем";
+    if (on) s_ver |= (uint64_t)1 << i; else s_ver &= ~((uint64_t)1 << i);
+    if (s_nvs.begin("invprof", false)) { s_nvs.putULong64("ver", s_ver); s_nvs.end(); }
+    return "";
+}
+
+static String jnum(float v, uint8_t dec) { return isnan(v) ? String("null") : String(v, (unsigned)dec); }
+static String jstr(const char* s) { String r = s ? s : ""; r.replace("\"", "'"); return "\"" + r + "\""; }
+
+String invSettingsJson() {
+    setInit();
+    String j;
+    j.reserve(9000);
+    float bt = setVal("bat"), mod = setVal("mod");
+    j = "{\"bt\":" + jnum(bt, 0) + ",\"mod\":" + jnum(mod, 0) + ",\"busy\":" + (gBusy() || wBusy() ? "true" : "false");
+    j += ",\"panelOnly\":" + jstr(PANEL_ONLY) + ",\"list\":[";
+    for (uint8_t i = 0; i < NSETS; i++) {
+        const SetDef& d = SETS[i];
+        float lo, hi;
+        setLimits(i, lo, hi);
+        String why = setWhyNot(i);
+        if (i) j += ",";
+        j += "{\"id\":" + jstr(d.id) + ",\"p\":" + jstr(d.panel) + ",\"n\":" + String(d.prog) +
+             ",\"g\":" + jstr(d.group) + ",\"t\":" + jstr(d.title) + ",\"k\":" + String(d.kind) +
+             ",\"u\":" + jstr(d.unit) + ",\"d\":" + String(d.dec) + ",\"lo\":" + String(lo, (unsigned)d.dec) +
+             ",\"hi\":" + String(hi, (unsigned)d.dec) + ",\"st\":" + String(d.step, (unsigned)d.dec) + ",\"l\":" + jstr(d.list) +
+             ",\"o\":" + jstr(d.opts) + ",\"def\":" + String(d.def, (unsigned)d.dec) + ",\"v\":" + jnum(s_sv[i], (unsigned)d.dec) +
+             ",\"s\":" + String(s_sup[i]) + ",\"ver\":" + ((s_ver >> i & 1) ? "true" : "false") +
+             ",\"ro\":" + (d.rule == SR_READONLY || (!d.wr && d.kind != SK_FLAG) ? "true" : "false") +
+             ",\"why\":" + jstr(why.c_str()) + ",\"note\":" + jstr(d.note) + "}";
+    }
+    return j + "]}";
+}
+
+String invSettingsText() {
+    setInit();
+    String r = "⚙️ Настройки инвертора\n";
+    const char* g = "";
+    for (uint8_t i = 0; i < NSETS; i++) {
+        const SetDef& d = SETS[i];
+        if (strcmp(g, d.group)) { g = d.group; r += String("\n") + g + ":\n"; }
+        r += (d.prog ? (d.prog < 10 ? "0" : "") + String(d.prog) + " " : String("   ")) + (d.panel[0] ? String(d.panel) + " " : String("")) +
+             d.title + ": " + (s_sup[i] == 0 ? String("не поддерживается") : fmtVal(i, s_sv[i])) + "\n";
+    }
+    return r;
 }
 
 uint32_t invSetSeq() { return s_wSeq; }
@@ -158,7 +466,7 @@ String invSetStatusJson() {
     static const char* const ST[] = { "idle", "busy", "busy", "busy", "busy", "done" };
     String m = s_wMsg;
     m.replace("\"", "'");
-    return String("{\"state\":\"") + ST[s_w] + "\",\"ok\":" + (s_wOk ? "true" : "false") +
+    return String("{\"state\":\"") + (gBusy() ? "busy" : ST[s_w]) + "\",\"ok\":" + (s_wOk ? "true" : "false") +
            ",\"seq\":" + String(s_wSeq) + ",\"msg\":\"" + m + "\"}";
 }
 
@@ -169,6 +477,30 @@ size_t invBuildRequest(uint8_t, uint8_t* out, size_t cap) {
     char wcmd[8];
     // Переключение не ждёт ответа дольше 15 с.
     if ((s_w == W_SENT || s_w == W_VERIFY) && millis() - s_wMs > 15000) wFinish(false, "инвертор не ответил");
+    if ((s_g == G_SENT || s_g == G_VERIFY) && millis() - s_gMs > 15000) gFinish(false, "инвертор не ответил");
+    if (s_g == G_QUEUED) {
+        fifoPush(K_WGEN);
+        trace(String("→ ") + s_gCmd + " (запись)");
+        s_g = G_SENT;
+        s_gMs = millis();
+        size_t n = strlen(s_gCmd);
+        if (n + 1 > cap) return 0;
+        memcpy(out, s_gCmd, n);
+        out[n] = '\r';
+        return n + 1;
+    }
+    if (s_g == G_READ) {                 // перечитать записанное
+        const SetDef& d = SETS[s_gIdx];
+        const char* rc = d.kind == SK_FLAG ? "TE?" : d.rd;
+        fifoPush((Kind)(d.kind == SK_FLAG ? 0x80 + SET_TE : 0x80 + s_gIdx));
+        trace(String("→ ") + rc + " (проверка записи)");
+        s_g = G_VERIFY;
+        s_gMs = millis();
+        size_t n = strlen(rc);
+        memcpy(out, rc, n);
+        out[n] = '\r';
+        return n + 1;
+    }
     if (s_w == W_QUEUED) {
         snprintf(wcmd, sizeof(wcmd), "%s%02u", s_wWhat ? "CPR" : "OPR", s_wCode);
         fifoPush(s_wWhat ? K_WCPR : K_WOPR);
@@ -180,18 +512,24 @@ size_t invBuildRequest(uint8_t, uint8_t* out, size_t cap) {
         out[n] = '\r';
         return n + 1;
     }
+    uint8_t setKind = 0;
     if (s_w == W_READ) {                 // перечитать то, что записали
         c = NAME[s_wWhat ? K_CPR : K_OPR];
         s_w = W_VERIFY;
         s_wMs = millis();
     } else if (!s_gSeen && s_sent > 2 * sizeof(CYCLE)) {
         c = "Q1";
+    } else if (s_gSeen && ++s_setTick >= 4 && (c = nextSetRead(setKind)) != nullptr) {
+        s_setTick = 0;                   // каждая четвёртая — настройка из таблицы
     } else {
+        if (s_setTick >= 4) s_setTick = 0;
+        setKind = 0;
         c = NAME[CYCLE[s_pos]];
         s_pos = (s_pos + 1) % sizeof(CYCLE);
     }
     if (s_sent < 255) s_sent++;
-    for (uint8_t k = 0; k < K_COUNT; k++) if (!strcmp(NAME[k], c)) { fifoPush((Kind)k); break; }
+    if (setKind) fifoPush((Kind)setKind);
+    else for (uint8_t k = 0; k < K_COUNT; k++) if (!strcmp(NAME[k], c)) { fifoPush((Kind)k); break; }
     trace(String("→ ") + c);
     size_t n = strlen(c);
     if (n + 1 > cap) return 0;
@@ -387,7 +725,9 @@ static void applyGws(const char* f[]) {
     invUpdate([&](InvState& v) {
         fresh(v);
         v.faultCode = (uint8_t)code;
-        if (code) v.mode = INVM_FAULT;
+        // 1–29 — авария, инвертор в режиме неисправности; 50–70 — только
+        // предупреждение, он работает дальше (руководство, 3.5.1–3.5.2).
+        if (code && code < 50) v.mode = INVM_FAULT;
     });
 }
 
@@ -474,12 +814,33 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
             else t += String(" [") + kname(k) + "]";
             trace(t);
         }
+        // Голова очереди — чтение настройки из таблицы: короткий ответ любого
+        // вида («(56.4», «(030», «(SIQ», пустой «(») — её, NAK — тоже её.
+        // V??? отвечает двумя полями — «(220 220»: берётся первое. Два поля со
+        // скобкой во втором — это SVFW, не настройка.
+        {
+            uint8_t head = s_fLen ? (uint8_t)s_fifo[s_fHead] : 0xFF;
+            bool setHead = head >= 0x80 && head < K_WOPR;
+            bool short1 = nf <= 1 || (nf == 2 && f[1][0] != '(');
+            if (setHead && line[0] == '(' && short1 && k != K_ACK && k != K_NAK) {
+                fifoPop();
+                applySetValue(head - 0x80, nf ? f[0] : "");
+                continue;
+            }
+            if (setHead && k == K_NAK) {
+                fifoPop();
+                setNak(head - 0x80);
+                continue;
+            }
+        }
         if (k == K_SHORT) {
             Kind head = fifoPop();
             if (head == K_OPR || head == K_CPR || head == K_OPM || head == K_TBAT) {
                 remember(head, line);
                 applySetting(head, inum(f[0]));
                 // Перечитали записанное — сверяем.
+                if (head == K_OPM) { setInit(); int8_t m = setIdx("mod"); s_sv[m] = inum(f[0]); s_sup[m] = 1; }
+                if (head == K_TBAT) { setInit(); int8_t b = setIdx("bat"); s_sv[b] = inum(f[0]); s_sup[b] = 1; }
                 if (s_w == W_VERIFY && head == (s_wWhat ? K_CPR : K_OPR)) {
                     long got = inum(f[0]);
                     if (got == s_wCode) wFinish(true, "встало");
@@ -496,13 +857,17 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
             Kind head;
             if (k == K_ACK) {
                 head = K_UNKNOWN;
-                while (s_fLen) { head = fifoPop(); if (head == K_WOPR || head == K_WCPR) break; }
+                while (s_fLen) { head = fifoPop(); if (head == K_WOPR || head == K_WCPR || head == K_WGEN) break; }
             } else {
                 head = fifoPop();
             }
             if ((head == K_WOPR || head == K_WCPR) && s_w == W_SENT) {
                 if (k == K_ACK) { s_w = W_READ; s_wMs = millis(); }
                 else wFinish(false, "инвертор отказал (NAK)");
+            }
+            if (head == K_WGEN && s_g == G_SENT) {
+                if (k == K_ACK) { s_g = G_READ; s_gMs = millis(); }
+                else gFinish(false, "инвертор отказал (NAK) — команда записи у HS35, похоже, другая");
             }
             continue;
         }

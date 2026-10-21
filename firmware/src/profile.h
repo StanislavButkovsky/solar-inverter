@@ -46,3 +46,10 @@ String   invSetSetting(uint8_t what, uint8_t code);
 String   invSetStatusJson();             // {"state":…,"msg":…,"seq":N}
 uint32_t invSetSeq();                    // растёт на каждом завершённом переключении
 String   invSetLastMsg();
+
+// Остальные настройки инвертора (у HS35 — hs35_settings.h): все значения,
+// пределы и почему нельзя писать; запись; отметка «сверено с экраном».
+String   invSettingsJson();
+String   invSettingsText();              // для бота
+String   invSettingWrite(const String& id, const String& value);   // "" — принято в работу
+String   invSettingVerify(const String& id, bool on);

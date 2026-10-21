@@ -1,6 +1,7 @@
 #include "events.h"
 #include "json.h"
 #include "state.h"
+#include "inv_codes.h"
 #include <time.h>
 #include <LittleFS.h>
 
@@ -73,7 +74,7 @@ const char* evText(EventKind k) {
     case EV_GRID_LOST:   return "пропало питание от сети";
     case EV_GRID_BACK:   return "питание от сети вернулось";
     case EV_INV_MODE:    return "инвертор сменил режим";
-    case EV_INV_FAULT:   return "авария инвертора";
+    case EV_INV_FAULT:   return "инвертор сообщил о неисправности";
     case EV_INV_DOWN:    return "связь с инвертором потеряна";
     case EV_INV_UP:      return "связь с инвертором установлена";
     case EV_INV_SET:     return "переключение настройки инвертора";
@@ -295,8 +296,8 @@ void evWatchLoop() {
     }
 
     if (v.faultCode && v.faultCode != pFaultCode) {
-        char d[16];
-        snprintf(d, sizeof(d), "код %u", v.faultCode);
+        char d[40];
+        snprintf(d, sizeof(d), "код %u %s", v.faultCode, invCodeText(v.faultCode));
         evAdd(EV_INV_FAULT, d);
     }
     pFaultCode = v.faultCode;

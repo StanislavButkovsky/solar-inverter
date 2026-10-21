@@ -7,6 +7,7 @@
 #include "profile.h"
 #include "bootlog.h"
 #include "weather.h"
+#include "inv_codes.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -244,6 +245,7 @@ static const char* HELP =
     "Команды:\n/status — что сейчас\n/today — итоги дня\n/week — за 7 дней\n/month — с начала месяца\n"
     "/outages — последние отключения сети\n"
     "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
+    "/settings — все настройки инвертора\n"
     "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
 // ------------------------------------------------------------------ очередь
@@ -501,6 +503,7 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     else if (cmd == "/today")   send(cli, chat, todayText());
     else if (cmd == "/outages") send(cli, chat, outagesText());
     else if (cmd == "/boots")   send(cli, chat, "🔁 " + bootText());
+    else if (cmd == "/settings") send(cli, chat, invSettingsText() + "\nМенять — на странице модуля: «Настройки» → «Инвертор».");
     else if (cmd == "/week")    s_reportReq = 1;
     else if (cmd == "/month")   s_reportReq = 2;
     else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
@@ -659,7 +662,12 @@ void tgLoop() {
     alarmsLoop(v, b);
     if (v.fresh) {
         if (v.faultCode != prevFault) {
-            tgNotify(v.faultCode ? "❗ Авария инвертора, код " + String(v.faultCode) : String("✅ Авария инвертора снята"));
+            String t = invCodeText(v.faultCode);
+            if (!v.faultCode)
+                tgNotify(prevFault >= 50 ? String("✅ Предупреждение инвертора снято") : String("✅ Авария инвертора снята"));
+            else
+                tgNotify(String(v.faultCode >= 50 ? "⚠️ Предупреждение инвертора" : "❗ Авария инвертора") + ", код " +
+                         String(v.faultCode) + (t.length() ? ": " + t : String("")));
             prevFault = v.faultCode;
         }
         if (linkSent) tgNotify("✅ Связь с инвертором восстановлена");

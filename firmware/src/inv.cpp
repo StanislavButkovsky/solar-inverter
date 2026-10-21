@@ -24,6 +24,10 @@ __attribute__((weak)) String invSetSetting(uint8_t, uint8_t) { return "этот 
 __attribute__((weak)) String invSetStatusJson() { return "{\"state\":\"none\"}"; }
 __attribute__((weak)) uint32_t invSetSeq() { return 0; }
 __attribute__((weak)) String invSetLastMsg() { return String(); }
+__attribute__((weak)) String invSettingsJson() { return "{\"list\":[]}"; }
+__attribute__((weak)) String invSettingsText() { return "У этого инвертора настройки из модуля не читаются."; }
+__attribute__((weak)) String invSettingWrite(const String&, const String&) { return "этот инвертор переключать не умеет"; }
+__attribute__((weak)) String invSettingVerify(const String&, bool) { return "этот инвертор переключать не умеет"; }
 
 void invOnBytes(const uint8_t* data, size_t n) {
     // Профиль сам решает, собрался ли ответ: у Modbus это длина и контрольная

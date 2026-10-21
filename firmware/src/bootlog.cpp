@@ -14,8 +14,20 @@ RTC_NOINIT_ATTR static uint32_t r_magic;
 RTC_NOINIT_ATTR static uint32_t r_upS;              // сколько проработала прошлая загрузка
 RTC_NOINIT_ATTR static char     r_why[40];          // подпись программной перезагрузки
 
-struct BootRec { uint32_t epoch; uint32_t prevUpS; uint8_t reason; char why[23]; };
-static_assert(sizeof(BootRec) == 32, "BootRec");
+// why — подпись по-русски, до 19 букв (по два байта в UTF-8). Было 23 байта:
+// «обновление прошивки» резалось посреди буквы, и /api/state отдавал
+// невалидный UTF-8. Поэтому новый ключ NVS — старые записи не читаются.
+struct BootRec { uint32_t epoch; uint32_t prevUpS; uint8_t reason; char why[39]; };
+static_assert(sizeof(BootRec) == 48, "BootRec");
+static const char* KEY = "list2";
+
+// Обрезка по границе символа UTF-8.
+static void copyUtf8(char* dst, size_t cap, const char* src) {
+    size_t n = strnlen(src, cap - 1);
+    while (n > 0 && (src[n] & 0xC0) == 0x80) n--;
+    memcpy(dst, src, n);
+    dst[n] = 0;
+}
 
 static BootRec  s_list[NBOOT];
 static uint8_t  s_n = 0;                            // записей в s_list, новая — [0]
@@ -48,7 +60,7 @@ static bool badReason(uint8_t r) {
 static void save() {
     Preferences p;
     if (!p.begin("boots", false)) return;
-    p.putBytes("list", s_list, sizeof(BootRec) * s_n);
+    p.putBytes(KEY, s_list, sizeof(BootRec) * s_n);
     p.end();
 }
 
@@ -66,9 +78,9 @@ void bootStart() {
 
     Preferences p;
     if (p.begin("boots", true)) {
-        size_t n = p.getBytesLength("list") / sizeof(BootRec);
+        size_t n = p.getBytesLength(KEY) / sizeof(BootRec);
         if (n > NBOOT) n = NBOOT;
-        if (n) p.getBytes("list", s_list, n * sizeof(BootRec));
+        if (n) p.getBytes(KEY, s_list, n * sizeof(BootRec));
         s_n = n;
         p.end();
     }
@@ -76,7 +88,7 @@ void bootStart() {
     memset(&s_list[0], 0, sizeof(BootRec));
     s_list[0].reason = s_reason;
     s_list[0].prevUpS = s_prevUpS;
-    strncpy(s_list[0].why, s_why.c_str(), sizeof(s_list[0].why) - 1);
+    copyUtf8(s_list[0].why, sizeof(s_list[0].why), s_why.c_str());
     if (s_n < NBOOT) s_n++;
     save();
     Serial.printf("[boot] причина: %s\n", bootReason().c_str());
@@ -95,8 +107,7 @@ void bootLoop() {
 }
 
 void bootMark(const char* why) {
-    strncpy(r_why, why, sizeof(r_why) - 1);
-    r_why[sizeof(r_why) - 1] = 0;
+    copyUtf8(r_why, sizeof(r_why), why);
     r_upS = millis() / 1000;
 }
 

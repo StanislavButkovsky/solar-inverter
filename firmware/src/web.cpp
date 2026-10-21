@@ -1,5 +1,6 @@
 #include "bootlog.h"
 #include "weather.h"
+#include "inv_codes.h"
 #include "web.h"
 #include "webui_gz.h"
 #include "icon.h"
@@ -117,6 +118,7 @@ static String jsonState() {
     j += ",\"chgW\":"   + String(v.chgW, 0);
     j += ",\"tempC\":"  + String(v.tempC);
     j += ",\"fault\":"  + String(v.faultCode);
+    j += ",\"faultText\":\"" + jsonEsc(invCodeText(v.faultCode)) + "\"";
     j += ",\"prioOut\":" + String(v.prioOut);
     j += ",\"prioChg\":" + String(v.prioChg);
     j += ",\"battType\":" + String(v.battType);
@@ -507,6 +509,33 @@ void webStart() {
             uint8_t what = w == "opp" ? 0 : w == "chp" ? 1 : 9;
             err = what > 1 ? String("что переключать?") : invSetSetting(what, (uint8_t)server.arg("code").toInt());
         }
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // Все настройки инвертора: значения, пределы, можно ли писать и почему нет.
+    server.on("/api/inv/settings", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", invSettingsJson());
+    });
+
+    // Запись одной настройки: id из таблицы, v — значение в единицах страницы.
+    // Под паролем модуля; сама проверка пределов — в профиле.
+    server.on("/api/inv/write", HTTP_GET, []() {
+        String err;
+        if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+        else err = invSettingWrite(server.arg("id"), server.arg("v"));
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // «Сверил с экраном — совпадает»: без этой отметки настройку не записать.
+    server.on("/api/inv/verify", HTTP_GET, []() {
+        String err;
+        if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+        else err = invSettingVerify(server.arg("id"), server.arg("on") != "0");
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
     });

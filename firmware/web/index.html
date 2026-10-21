@@ -239,6 +239,16 @@ body.light #pw_tip { color: #1d2433; }
 /* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+.is_g { margin: 14px 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8a93a5; }
+.is_r { padding: 9px 0; border-bottom: 1px solid #232a36; }
+.is_r .is_h { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.is_r .is_n { font-variant-numeric: tabular-nums; color: #8a93a5; margin-right: 6px; }
+.is_r .is_v { font-weight: 600; white-space: nowrap; }
+.is_r .is_ed { margin-top: 8px; }
+.is_r .is_ed button { margin: 6px 6px 0 0; }
+.is_ok { color: #43d17f; font-size: 13px; }
+body.light .is_r { border-color: #e7ebf2; }
+body.light .is_ok { color: #0f7440; }
 a.btn { display: block; text-align: center; text-decoration: none; padding: 11px 14px;
         border-radius: 10px; background: #29303e; color: #eef1f6; border: 1px solid #3a4354; }
 body.light a.btn { background: #f3f5fa; border-color: #cdd5e2; color: #171b22; }
@@ -330,6 +340,7 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Солнечные панели</td><td id="i_pv">—</td></tr>
           <tr><td>Температура</td><td id="i_temp">—</td></tr>
           <tr><td>Приоритет выхода</td><td id="i_po">—</td></tr>
+          <tr class="hidden" id="i_faultrow"><td id="i_faultk">Авария</td><td id="i_fault">—</td></tr>
           <tr><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
           <tr><td>Тип батареи</td><td id="i_bt">—</td></tr>
         </table>
@@ -660,6 +671,23 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
+  <div class="row" data-tab="inv">
+    <div class="col c1"><div class="card">
+      <h2>Все настройки инвертора <span id="is_chip" class="chip gray">—</span></h2>
+      <div class="sub" style="margin-bottom:10px">
+        Модуль читает их сам, раз в минуту. Рядом — номер программы на панели.
+        <b>Изменить можно только то, что вы сверили с экраном инвертора</b>: откройте
+        на панели программу с этим номером и, если значение то же, нажмите «Совпадает».
+        Значения проверяются по руководству HS35-5648PRO для вашего типа батареи.
+      </div>
+      <label>Пароль модуля</label>
+      <input id="is_pass" type="password" autocomplete="current-password">
+      <div class="sub" id="is_msg" style="margin-top:8px"></div>
+      <div id="is_list" style="margin-top:6px"><div class="sub">читаю…</div></div>
+      <div class="sub" id="is_panel" style="margin-top:12px;line-height:1.6"></div>
+    </div></div>
+  </div>
+
   <div class="row" data-tab="auto">
     <div class="col c1"><div class="card">
       <h2>Погода и прогноз солнца <span id="au_chip" class="chip gray">—</span></h2>
@@ -939,6 +967,7 @@ function setTab(t) {
   for (var i = 0; i < rows.length; i++) rows[i].classList.toggle("hidden", rows[i].getAttribute("data-tab") !== t);
   for (var j = 0; j < TABS.length; j++) $("tb_" + TABS[j]).classList.toggle("on", TABS[j] === t);
   if (onSettings && history.replaceState) history.replaceState(null, "", "#settings/" + t);
+  if (t === "inv") setTimeout(function () { isLoad(true); }, 0);
   window.scrollTo(0, 0);
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
@@ -1049,6 +1078,11 @@ function renderInv(v, b) {
   $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
   // В карте регистров этого донгла приоритетов нет — честнее прочерк, чем догадка.
   $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "неизвестно") : "—";
+  show("i_faultrow", live && v.fault > 0);
+  if (live && v.fault > 0) {
+    $("i_faultk").innerHTML = v.fault >= 50 ? "Предупреждение" : "Авария";
+    $("i_fault").innerHTML = "код " + v.fault + (v.faultText ? " — " + v.faultText : "");
+  }
 
   // Солнце крупно; «за сегодня» — счётчик инвертора, если он его отдаёт.
   if (live && v.pvW >= 1000) $("sol_w").innerHTML = (v.pvW / 1000).toFixed(2) + '<span> кВт</span>';
@@ -1069,6 +1103,7 @@ function render(s) {
   autoRender(s);
   bootRender(s);
   setRender(s);
+  isState(s);
   if (s.inv) renderInv(s.inv, b);
 
   /* --- состояние связи, мелким под процентами --- */
@@ -1398,6 +1433,116 @@ function tgSave() {
   tgCmd(q);
   $("tg_token").value = "";
   tgLowSet = false;
+}
+
+/* ----------------------------------------- все настройки инвертора */
+var isData = null, isOpen = "", isWait = -1, isLoadAt = 0;
+function isLoad(force) {
+  if (!onSettings || setTabNow !== "inv") return;
+  if (!force && Date.now() - isLoadAt < 15000) return;
+  isLoadAt = Date.now();
+  get("/api/inv/settings", function (d) { isData = d; isRender(); });
+}
+function isVal(e, v) {
+  if (v === null || v === undefined) return "—";
+  if (e.k === 1) return v ? "вкл." : "выкл.";
+  if (e.k === 0 && e.o) { var o = e.o.split("|")[Math.round(v)]; return o ? o.split(" — ")[0] : String(v); }
+  return String(v.toFixed(e.d)).replace(".", ",") + (e.u ? " " + e.u : "");
+}
+function isRender() {
+  var d = isData;
+  if (!d || !d.list) return;
+  var known = 0, ver = 0;
+  for (var i = 0; i < d.list.length; i++) { if (d.list[i].v !== null) known++; if (d.list[i].ver) ver++; }
+  chip("is_chip", known ? "green" : "amber", known ? "прочитано " + known + " из " + d.list.length : "читаю");
+  var h = "", g = "";
+  for (var j = 0; j < d.list.length; j++) {
+    var e = d.list[j];
+    if (e.g !== g) { g = e.g; h += '<div class="is_g">' + g + '</div>'; }
+    var num = e.n ? (e.n < 10 ? "0" : "") + e.n + " " + e.p : "—";
+    var val = e.s === 0 ? '<span class="sub">не поддерживается</span>' : isVal(e, e.v);
+    h += '<div class="is_r"><div class="is_h"><span><span class="is_n">' + num + '</span>' + e.t + '</span>' +
+         '<span class="is_v">' + val + '</span></div>';
+    var sub = [];
+    if (e.ver) sub.push('<span class="is_ok">✓ сверено с панелью</span>');
+    if (!e.ro && e.s !== 0) {
+      if (e.k === 2 && !e.l) sub.push("допустимо " + isVal(e, e.lo) + " … " + isVal(e, e.hi));
+      if (e.def && e.k === 2) sub.push("по умолчанию " + isVal(e, e.def));
+    }
+    if (sub.length) h += '<div class="sub" style="margin-top:3px">' + sub.join(" · ") + '</div>';
+    if (isOpen === e.id) h += isEditor(e);
+    else if (e.s !== 0 && e.v !== null && !e.ro)
+      h += '<div class="is_ed"><button onclick="isToggle(\'' + e.id + '\')">' + (e.ver ? "Изменить" : "Сверить и изменить") + '</button></div>';
+    else if (e.ro && e.note) h += '<div class="sub" style="margin-top:3px">' + e.note + '</div>';
+    h += '</div>';
+  }
+  $("is_list").innerHTML = h;
+  $("is_panel").innerHTML = "<b>Только с панели</b> — команд для них в протоколе нет или менять их из модуля опасно: " +
+    d.panelOnly.split("|").join(", ") + ". Тип батареи тоже меняется только с панели.";
+}
+function isEditor(e) {
+  var h = '<div class="is_ed">';
+  if (e.note) h += '<div class="sub" style="margin-bottom:6px">' + e.note + '</div>';
+  if (!e.ver) {
+    h += '<div class="sub">На панели: программа <b>' + (e.n < 10 ? "0" : "") + e.n + " " + e.p + '</b>. Там стоит <b>' +
+         isVal(e, e.v) + '</b>?</div>' +
+         '<button class="accent" onclick="isVerify(\'' + e.id + '\', 1)">Совпадает</button>' +
+         '<button onclick="isToggle(\'\')">Не совпадает / потом</button>' +
+         '<div class="sub" style="margin-top:6px">Если на экране другое — не отмечайте: значит, у HS35 своя нумерация, ' +
+         'и запись поставила бы не то. Напишите, что видите.</div></div>';
+    return h;
+  }
+  if (e.why) { h += '<div class="sub">' + e.why + '</div><button onclick="isToggle(\'\')">Закрыть</button></div>'; return h; }
+  if (e.k === 1) {
+    h += '<select id="is_in"><option value="1"' + (e.v ? " selected" : "") + '>вкл.</option><option value="0"' +
+         (e.v ? "" : " selected") + '>выкл.</option></select>';
+  } else if (e.k === 0) {
+    var o = e.o.split("|"), s = '<select id="is_in">';
+    for (var i = 0; i < o.length; i++) s += '<option value="' + i + '"' + (Math.round(e.v) === i ? " selected" : "") + '>' + o[i] + '</option>';
+    h += s + '</select>';
+  } else if (e.l) {
+    var l = e.l.split("|"), t = '<select id="is_in">';
+    for (var k = 0; k < l.length; k++) t += '<option value="' + l[k] + '"' + (Number(l[k]) === e.v ? " selected" : "") + '>' + l[k] + " " + e.u + '</option>';
+    h += t + '</select>';
+  } else {
+    h += '<input id="is_in" inputmode="decimal" value="' + String(e.v.toFixed(e.d)).replace(".", ",") + '">' +
+         '<div class="sub" style="margin-top:4px">' + isVal(e, e.lo) + " … " + isVal(e, e.hi) + ', шаг ' + String(e.st).replace(".", ",") + " " + e.u + '</div>';
+  }
+  h += '<button class="accent" onclick="isWrite(\'' + e.id + '\')">Записать</button>' +
+       '<button onclick="isToggle(\'\')">Отмена</button>' +
+       '<button onclick="isVerify(\'' + e.id + '\', 0)">Снять отметку «сверено»</button></div>';
+  return h;
+}
+function isToggle(id) { isOpen = isOpen === id ? "" : id; isRender(); }
+function isFind(id) { for (var i = 0; i < isData.list.length; i++) if (isData.list[i].id === id) return isData.list[i]; return null; }
+function isVerify(id, on) {
+  var q = "/api/inv/verify?id=" + id + "&on=" + on + "&pass=" + encodeURIComponent($("is_pass").value);
+  get(q, function (r) {
+    $("is_msg").innerHTML = r.ok ? (on ? "отмечено: сверено с панелью" : "отметка снята") : ("не вышло: " + (r.error || "?"));
+    if (r.ok) isLoad(true);
+  }, function () { $("is_msg").innerHTML = "модуль не ответил"; });
+}
+function isWrite(id) {
+  var e = isFind(id), v = $("is_in").value;
+  if (!e) return;
+  var shown = e.k === 2 ? v + " " + e.u : $("is_in").options[$("is_in").selectedIndex].text;
+  if (!confirm("Записать в инвертор: " + (e.p || e.id) + " — " + e.t + " = " + shown + "?")) return;
+  get("/api/state", function (s) {
+    isWait = s.inv && s.inv.set ? s.inv.set.seq : 0;
+    get("/api/inv/write?id=" + id + "&v=" + encodeURIComponent(v) + "&pass=" + encodeURIComponent($("is_pass").value), function (r) {
+      $("is_msg").innerHTML = r.ok ? "отправлено, жду ответа инвертора…" : ("не принято: " + (r.error || "?"));
+      if (!r.ok) isWait = -1; else { isOpen = ""; isRender(); }
+    }, function () { $("is_msg").innerHTML = "модуль не ответил"; isWait = -1; });
+  });
+}
+function isState(s) {                          // итог записи приходит в общем inv.set
+  var w = s.inv && s.inv.set;
+  if (w && isWait >= 0 && w.seq !== isWait && w.state !== "busy") {
+    $("is_msg").innerHTML = (w.ok ? "✓ " : "✗ ") + w.msg;
+    isWait = -1;
+    isLoad(true);
+  }
+  isLoad(false);
 }
 
 /* ----------------------------------------- погода и автоматика */
