@@ -239,6 +239,13 @@ body.light #pw_tip { color: #1d2433; }
 /* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+/* Вкладки настроек: липнут к верху и листаются пальцем, если не влезли. */
+.settabs { position: sticky; top: 0; z-index: 5; background: #10131a;
+           display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch;
+           scrollbar-width: none; padding: 8px 0 2px; margin: 0 0 6px; }
+.settabs::-webkit-scrollbar { display: none; }
+.settabs button { flex: 1 0 auto; padding: 9px 8px; font-size: 13px; }
+body.light .settabs { background: #eef1f6; }
 svg.bars { display: block; width: 100%; height: 170px; }
 svg.bars .bar { fill: #4f8fe6; }
 svg.bars .bar.sel { fill: #8fbaf5; }
@@ -526,7 +533,15 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row hidden" id="saved"><div class="col c1"></div></div>
 
-  <div class="row">
+  <div class="tabs settabs" id="settabs">
+    <button onclick="setTab('inv')"  id="tb_inv">Инвертор</button><button
+            onclick="setTab('batt')" id="tb_batt">Батарея</button><button
+            onclick="setTab('net')"  id="tb_net">Сеть</button><button
+            onclick="setTab('tg')"   id="tb_tg">Telegram</button><button
+            onclick="setTab('sys')"  id="tb_sys">Модуль</button>
+  </div>
+
+  <div class="row" data-tab="net">
     <div class="col c1"><div class="card">
       <h2>Сеть</h2>
       <table class="kv">
@@ -547,7 +562,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="batt">
     <div class="col c1"><div class="card">
       <h2>Батарея</h2>
       <div class="sub" style="margin-bottom:12px">
@@ -569,7 +584,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="batt">
     <div class="col c2"><div class="card">
       <h2>Канал связи</h2>
       <table class="kv">
@@ -593,7 +608,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="inv">
     <div class="col c1"><div class="card">
       <h2>Режимы инвертора</h2>
       <div class="sub" style="margin-bottom:10px">
@@ -601,7 +616,7 @@ body.light pre.rep { background: #f2f4f8; }
         переключения модуль перечитывает настройку и пишет, встала ли она.
       </div>
       <label>Приоритет работы (OPP) — сейчас <b id="set_opp_now">—</b></label>
-      <select id="set_opp">
+      <select id="set_opp" onchange="this.dataset.touched=1">
         <option value="0">GRD — сеть в приоритете</option>
         <option value="1">PU — солнце в приоритете</option>
         <option value="2">PBG — солнце → батарея → сеть</option>
@@ -612,7 +627,7 @@ body.light pre.rep { background: #f2f4f8; }
       </div>
       <div style="margin-top:8px"><button class="wide" onclick="invSet('opp')">Переключить OPP</button></div>
       <label>Приоритет зарядки (CHP) — сейчас <b id="set_chp_now">—</b></label>
-      <select id="set_chp">
+      <select id="set_chp" onchange="this.dataset.touched=1">
         <option value="0">PV — от солнца в приоритете</option>
         <option value="1">PNG — от солнца и сети</option>
         <option value="2">OPV — только от солнца</option>
@@ -624,7 +639,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="tg">
     <div class="col c1"><div class="card">
       <h2>Telegram <span id="tg_chip" class="chip gray">—</span></h2>
       <div class="sub" id="tg_hint" style="margin-bottom:10px"></div>
@@ -653,7 +668,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
       <h2>Обновление прошивки</h2>
       <div class="sub" id="fw_ver" style="margin-bottom:10px">Сборка: —</div>
@@ -684,7 +699,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
       <h2>Оформление</h2>
       <div class="sub" style="margin-bottom:12px">
@@ -703,7 +718,7 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
-  <div class="row">
+  <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
       <h2>Ярлык на главном экране</h2>
       <div class="sub" style="line-height:1.7">
@@ -818,9 +833,25 @@ function get(url, cb, onFail) {
 
 /* ----------------------------------------- переключение экранов */
 var onSettings = false, onStats = false;
-function showSettings() { onSettings = true;  onStats = false; paint(); }
+var TABS = ["inv", "batt", "net", "tg", "sys"], setTabNow = "inv";
+try { var tsv = localStorage.getItem("settab"); if (TABS.indexOf(tsv) >= 0) setTabNow = tsv; } catch (e) { }
+function setTab(t) {
+  if (TABS.indexOf(t) < 0) t = "inv";
+  setTabNow = t;
+  try { localStorage.setItem("settab", t); } catch (e) { }
+  var rows = document.querySelectorAll("#settings [data-tab]");
+  for (var i = 0; i < rows.length; i++) rows[i].classList.toggle("hidden", rows[i].getAttribute("data-tab") !== t);
+  for (var j = 0; j < TABS.length; j++) $("tb_" + TABS[j]).classList.toggle("on", TABS[j] === t);
+  if (onSettings && history.replaceState) history.replaceState(null, "", "#settings/" + t);
+  window.scrollTo(0, 0);
+}
+function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
 function showStats()    { onSettings = false; onStats = true;  paint(); stLoad(); }
-function showDash()     { onSettings = false; onStats = false; paint(); pwDraw(); }
+function showDash()     { onSettings = false; onStats = false; paint(); pwDraw();
+  if (/^#settings/.test(location.hash) && history.replaceState) history.replaceState(null, "", location.pathname + location.search); }
+// Ссылка вида #settings/tg открывает сразу нужную вкладку настроек.
+function fromHash() { var m = /^#settings(?:\/(\w+))?/.exec(location.hash); if (m) showSettings(m[1]); }
+window.addEventListener("hashchange", fromHash);
 function paint() {
   show("dash", !onSettings && !onStats); show("settings", onSettings); show("stats", onStats);
   window.scrollTo(0, 0);
@@ -1196,12 +1227,16 @@ function setRender(s) {
   if (!v) return;
   $("set_opp_now").innerHTML = v.fresh ? (PRIO_OUT[v.prioOut] || "неизвестно").split(" — ")[0] : "—";
   $("set_chp_now").innerHTML = v.fresh ? (PRIO_CHG[v.prioChg] || "неизвестно").split(" — ")[0] : "—";
+  // Список стоит на текущем значении, пока человек сам его не тронул.
+  if (v.fresh && v.prioOut < 3 && !$("set_opp").dataset.touched) $("set_opp").value = String(v.prioOut);
+  if (v.fresh && v.prioChg < 3 && !$("set_chp").dataset.touched) $("set_chp").value = String(v.prioChg);
   var w = v.set;
   if (!w || w.state === "none") return;
   if (w.state === "busy") $("set_msg").innerHTML = "переключаю, жду ответа инвертора…";
   else if (setWaitSeq >= 0 && w.seq !== setWaitSeq) {
     $("set_msg").innerHTML = (w.ok ? "✓ " : "✗ ") + w.msg;
     setWaitSeq = -1;
+    delete $("set_opp").dataset.touched; delete $("set_chp").dataset.touched;   // дальше — снова по факту
   }
 }
 function invSet(what) {
@@ -1592,6 +1627,7 @@ get("/api/time?t=" + Math.floor(new Date().getTime() / 1000), function () {});
 
 applyTheme();
 paint();
+fromHash();
 tick();
 events();
 usbPoll();

@@ -259,6 +259,11 @@ static String   s_jumps;                 // скачки больше 15 пун�
 
 static void setSoc(float soc, SocSrc src, const char* line) {
     if (soc < 0 || soc > 100) return;
+    // Оценка инвертора бывает нулём при живой батарее (21.10.2026: 0 % при
+    // 49,8 В, сразу после перезагрузки модуля, пока BMS ещё не ответила) —
+    // бот слал «батарея 0 %». Её ноль не берём никогда, а первую минуту
+    // после включения не берём её вовсе: ждём BMS.
+    if (src == SOC_GPDAT0 && (soc < 1 || millis() < 60000)) return;
     if (src < s_socSrc && millis() - s_socMs < 120000) return;
     if (s_socLast >= 0 && fabsf(soc - s_socLast) > 15 && s_jumps.length() < 900) {
         char b[48];

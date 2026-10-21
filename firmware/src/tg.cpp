@@ -354,8 +354,14 @@ void tgLoop() {
     InvState v = invSnapshot();
     BmsState b = stateSnapshot();
 
-    if (b.fresh && b.socKnown) {
-        if (!lowSent && b.soc < cfg().tgSocLow) {
+    // Ниже порога должно продержаться 2 минуты — одиночный ложный замер до
+    // телефона не доходит; первые 2 минуты после включения не тревожим.
+    static uint32_t lowSince = 0;
+    bool low = b.fresh && b.socKnown && b.soc < cfg().tgSocLow;
+    if (!low) lowSince = 0;
+    else if (!lowSince) lowSince = millis();
+    if (b.fresh && b.socKnown && millis() > 120000) {
+        if (!lowSent && low && millis() - lowSince >= 120000) {
             lowSent = true;
             tgNotify("🔋 Батарея " + String(b.soc, 0) + " % — ниже порога " + String(cfg().tgSocLow) + " %\n" + battLine());
         } else if (lowSent && b.soc > cfg().tgSocLow + 5) {
