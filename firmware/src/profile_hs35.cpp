@@ -33,8 +33,10 @@ const uint8_t  INV_NSTEPS = 1;           // круг ведёт сам проф�
 enum Kind : uint8_t {
     K_GPDAT0, K_GPV, K_GOP, K_GLINE, K_GBAT, K_BL, K_GMOD, K_GWS, K_GTMP, K_GBMS,
     K_GCHG, K_F, K_SVFW, K_Q1,
-    K_OPR, K_CPR, K_OPM, K_TBAT,                 // настройки: только чтение
-    K_COUNT, K_SHORT = 0xFD, K_NAK = 0xFE, K_UNKNOWN = 0xFF
+    K_OPR, K_CPR, K_OPM, K_TBAT,                 // настройки: чтение
+    K_COUNT,
+    K_WOPR = 0xF0, K_WCPR,                       // запись OPRdd / CPRdd — в очереди, не в круге
+    K_ACK = 0xFC, K_SHORT = 0xFD, K_NAK = 0xFE, K_UNKNOWN = 0xFF
 };
 static const char* const NAME[K_COUNT] = {
     "GPDAT0", "GPV", "GOP", "GLINE", "GBAT", "BL", "GMOD", "GWS", "GTMP", "GBMS",
@@ -72,6 +74,13 @@ static void trace(const String& line) {
     if (s_tLen < 40) s_tLen++; else s_tHead = (s_tHead + 1) % 40;
 }
 
+static const char* kname(uint8_t k) {
+    if (k < K_COUNT) return NAME[k];
+    if (k == K_WOPR) return "запись OPR";
+    if (k == K_WCPR) return "запись CPR";
+    return "?";
+}
+
 static Kind    s_fifo[8];
 static uint8_t s_fHead = 0, s_fLen = 0;
 static void fifoPush(Kind k) {
@@ -106,11 +115,73 @@ static float s_capAh = 0;                // полная ёмкость бата
 // разделены \r.
 void invResetStream() { }
 
+// ------------------------------------------------------------------ запись
+
+// Переключение приоритетов. Коды — только сверенные на живом HS35
+// 21.10.2026: OPP GRD 0, PU 1, PBG 2; CHP PV 0, PNG 1, OPV 2. Команда
+// OPRdd / CPRdd уходит вне круга, ответ ACK или NAK сопоставляется через ту
+// же очередь отправленных (он тоже приходит на команду позже), потом
+// настройка перечитывается — «встало» говорит только перечитанное значение.
+enum WState : uint8_t { W_IDLE, W_QUEUED, W_SENT, W_READ, W_VERIFY, W_DONE };
+static const char* const W_NAME[] = { "OPP", "CHP" };
+static const char* const W_OPT[2][3] = { { "GRD", "PU", "PBG" }, { "PV", "PNG", "OPV" } };
+static volatile WState s_w = W_IDLE;
+static volatile uint8_t s_wWhat = 0, s_wCode = 0;
+static uint32_t s_wMs = 0, s_wSeq = 0;
+static bool     s_wOk = false;
+static String   s_wMsg;
+
+static void wFinish(bool ok, const String& msg) {
+    s_wOk = ok;
+    s_wMsg = String(W_NAME[s_wWhat]) + " → " + W_OPT[s_wWhat][s_wCode] + ": " + msg;
+    s_w = W_DONE;
+    s_wSeq++;
+}
+
+String invSetSetting(uint8_t what, uint8_t code) {
+    if (what > 1 || code > 2) return "такого значения нет";
+    if (s_w == W_QUEUED || s_w == W_SENT || s_w == W_READ || s_w == W_VERIFY) return "предыдущее переключение ещё идёт";
+    s_wWhat = what;
+    s_wCode = code;
+    s_wMsg = "";
+    s_w = W_QUEUED;
+    return "";
+}
+
+uint32_t invSetSeq() { return s_wSeq; }
+String   invSetLastMsg() { return s_wMsg; }
+
+String invSetStatusJson() {
+    static const char* const ST[] = { "idle", "busy", "busy", "busy", "busy", "done" };
+    String m = s_wMsg;
+    m.replace("\"", "'");
+    return String("{\"state\":\"") + ST[s_w] + "\",\"ok\":" + (s_wOk ? "true" : "false") +
+           ",\"seq\":" + String(s_wSeq) + ",\"msg\":\"" + m + "\"}";
+}
+
 size_t invBuildRequest(uint8_t, uint8_t* out, size_t cap) {
     // Если G-ASCII не отозвался за два круга — это не тот инвертор, переходим
     // на старый Q1, который у HS35 тоже есть.
     const char* c;
-    if (!s_gSeen && s_sent > 2 * sizeof(CYCLE)) {
+    char wcmd[8];
+    // Переключение не ждёт ответа дольше 15 с.
+    if ((s_w == W_SENT || s_w == W_VERIFY) && millis() - s_wMs > 15000) wFinish(false, "инвертор не ответил");
+    if (s_w == W_QUEUED) {
+        snprintf(wcmd, sizeof(wcmd), "%s%02u", s_wWhat ? "CPR" : "OPR", s_wCode);
+        fifoPush(s_wWhat ? K_WCPR : K_WOPR);
+        trace(String("→ ") + wcmd + " (запись)");
+        s_w = W_SENT;
+        s_wMs = millis();
+        size_t n = strlen(wcmd);
+        memcpy(out, wcmd, n);
+        out[n] = '\r';
+        return n + 1;
+    }
+    if (s_w == W_READ) {                 // перечитать то, что записали
+        c = NAME[s_wWhat ? K_CPR : K_OPR];
+        s_w = W_VERIFY;
+        s_wMs = millis();
+    } else if (!s_gSeen && s_sent > 2 * sizeof(CYCLE)) {
         c = "Q1";
     } else {
         c = NAME[CYCLE[s_pos]];
@@ -145,7 +216,8 @@ static int   flen(const char* f) { int n = 0; while (f[n] && f[n] != ' ') n++; r
 
 // Отпечатки ответов — по живому HS35 20.10.2026 и тестам ha-eybond-local.
 static Kind classify(const char* line, const char* f[], int n) {
-    if (!strncmp(line, "NAK", 3)) return K_NAK;
+    if (!strncmp(line, "NAK", 3) || !strncmp(line, "(NAK", 4)) return K_NAK;
+    if (!strncmp(line, "ACK", 3) || !strncmp(line, "(ACK", 4)) return K_ACK;
     if (!strncmp(line, "BL", 2))  return K_BL;
     if (line[0] == '#')           return n >= 4 ? K_F : K_UNKNOWN;      // #220.0 026 048.0 50.0
     if (line[0] != '(')           return K_UNKNOWN;
@@ -165,6 +237,7 @@ static Kind classify(const char* line, const char* f[], int n) {
 }
 
 static void fresh(InvState& v) { v.linked = true; v.fresh = true; v.lastFrameMs = millis(); }
+
 
 // ------------------------------------------------------------------ заряд
 
@@ -388,8 +461,9 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         Kind k = classify(line, f, nf);
         {
             String t = String("← ") + String(line).substring(0, 40);
-            if (k == K_SHORT || k == K_NAK || k == K_UNKNOWN) t += s_fLen ? String(" [голова: ") + NAME[s_fifo[s_fHead]] + "]" : String(" [очередь пуста]");
-            else t += String(" [") + NAME[k] + "]";
+            if (k == K_SHORT || k == K_NAK || k == K_ACK || k == K_UNKNOWN)
+                t += s_fLen ? String(" [голова: ") + kname(s_fifo[s_fHead]) + "]" : String(" [очередь пуста]");
+            else t += String(" [") + kname(k) + "]";
             trace(t);
         }
         if (k == K_SHORT) {
@@ -397,10 +471,34 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
             if (head == K_OPR || head == K_CPR || head == K_OPM || head == K_TBAT) {
                 remember(head, line);
                 applySetting(head, inum(f[0]));
+                // Перечитали записанное — сверяем.
+                if (s_w == W_VERIFY && head == (s_wWhat ? K_CPR : K_OPR)) {
+                    long got = inum(f[0]);
+                    if (got == s_wCode) wFinish(true, "встало");
+                    else wFinish(false, "инвертор ответил ACK, но значение осталось " + String(got));
+                }
             }
             continue;
         }
-        if (k == K_NAK || k == K_UNKNOWN) { fifoPop(); continue; }
+        if (k == K_ACK || k == K_NAK) {
+            // ACK обычные команды не дают никогда — значит, это ответ на запись,
+            // даже если перед ней потерялся чей-то ответ: выравниваемся до неё.
+            // NAK бывает и на обычные — его приписываем записи, только если
+            // запись в голове очереди.
+            Kind head;
+            if (k == K_ACK) {
+                head = K_UNKNOWN;
+                while (s_fLen) { head = fifoPop(); if (head == K_WOPR || head == K_WCPR) break; }
+            } else {
+                head = fifoPop();
+            }
+            if ((head == K_WOPR || head == K_WCPR) && s_w == W_SENT) {
+                if (k == K_ACK) { s_w = W_READ; s_wMs = millis(); }
+                else wFinish(false, "инвертор отказал (NAK)");
+            }
+            continue;
+        }
+        if (k == K_UNKNOWN) { fifoPop(); continue; }
         fifoSync(k);
         if (k != K_Q1) { s_gSeen = true; s_sent = 0; }
         remember(k, line);

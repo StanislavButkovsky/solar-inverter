@@ -120,6 +120,9 @@ button.wide { display: block; width: 100%; }
 button.accent { background: #1d4ed8; border-color: #2a5ce0; }
 input { background: #222836; border: 1px solid #3a4354; border-radius: 9px;
         color: #eef1f6; padding: 11px 12px; font-size: 16px; width: 100%; }
+select { display: block; width: 100%; background: #222836; border: 1px solid #3a4354; border-radius: 9px;
+         color: #eef1f6; font-size: 15px; padding: 10px; margin-top: 4px; }
+body.light select { background: #ffffff; border-color: #cdd5e2; color: #171b22; }
 label { display: block; color: #8a93a5; font-size: 12px; margin: 12px 0 5px; }
 
 /* Индикатор уровня: четыре палочки. Без SVG и без flex — просто inline-block,
@@ -592,6 +595,33 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row">
     <div class="col c1"><div class="card">
+      <h2>Режимы инвертора</h2>
+      <div class="sub" style="margin-bottom:10px">
+        Только выбор из готовых вариантов — те же, что на экране инвертора. После
+        переключения модуль перечитывает настройку и пишет, встала ли она.
+      </div>
+      <label>Приоритет работы (OPP) — сейчас <b id="set_opp_now">—</b></label>
+      <select id="set_opp">
+        <option value="0">GRD — сеть в приоритете</option>
+        <option value="1">PU — солнце в приоритете</option>
+        <option value="2">PBG — солнце → батарея → сеть</option>
+      </select>
+      <div style="margin-top:8px"><button class="wide" onclick="invSet('opp')">Переключить OPP</button></div>
+      <label>Приоритет зарядки (CHP) — сейчас <b id="set_chp_now">—</b></label>
+      <select id="set_chp">
+        <option value="0">PV — от солнца в приоритете</option>
+        <option value="1">PNG — от солнца и сети</option>
+        <option value="2">OPV — только от солнца</option>
+      </select>
+      <div style="margin-top:8px"><button class="wide" onclick="invSet('chp')">Переключить CHP</button></div>
+      <label>Пароль модуля</label>
+      <input id="set_pass" type="password" autocomplete="current-password">
+      <div class="sub" id="set_msg" style="margin-top:8px"></div>
+    </div></div>
+  </div>
+
+  <div class="row">
+    <div class="col c1"><div class="card">
       <h2>Telegram <span id="tg_chip" class="chip gray">—</span></h2>
       <div class="sub" id="tg_hint" style="margin-bottom:10px"></div>
       <div id="tg_code" class="hidden" style="font-size:28px;font-weight:600;letter-spacing:.15em;margin:6px 0 10px"></div>
@@ -904,6 +934,7 @@ function render(s) {
   var b = s.bms, l = s.link;
   otaRender(s);
   tgRender(s);
+  setRender(s);
   if (s.inv) renderInv(s.inv, b);
 
   /* --- состояние связи, мелким под процентами --- */
@@ -1154,6 +1185,33 @@ function events() {
     $("log").innerHTML = h;
   });
 }
+/* ----------------------------------------- режимы инвертора */
+var setWaitSeq = -1;
+function setRender(s) {
+  var v = s.inv;
+  if (!v) return;
+  $("set_opp_now").innerHTML = v.fresh ? (PRIO_OUT[v.prioOut] || "неизвестно").split(" — ")[0] : "—";
+  $("set_chp_now").innerHTML = v.fresh ? (PRIO_CHG[v.prioChg] || "неизвестно").split(" — ")[0] : "—";
+  var w = v.set;
+  if (!w || w.state === "none") return;
+  if (w.state === "busy") $("set_msg").innerHTML = "переключаю, жду ответа инвертора…";
+  else if (setWaitSeq >= 0 && w.seq !== setWaitSeq) {
+    $("set_msg").innerHTML = (w.ok ? "✓ " : "✗ ") + w.msg;
+    setWaitSeq = -1;
+  }
+}
+function invSet(what) {
+  var sel = $("set_" + what), code = sel.value, name = sel.options[sel.selectedIndex].text;
+  if (!confirm("Переключить " + what.toUpperCase() + " на «" + name + "»?")) return;
+  get("/api/state", function (s) {                 // запомнить, какое завершение ждём
+    setWaitSeq = s.inv && s.inv.set ? s.inv.set.seq : 0;
+    get("/api/inv/set?what=" + what + "&code=" + code + "&pass=" + encodeURIComponent($("set_pass").value), function (r) {
+      $("set_msg").innerHTML = r.ok ? "отправлено, жду ответа инвертора…" : ("не принято: " + (r.error || "?"));
+      if (!r.ok) setWaitSeq = -1;
+    }, function () { $("set_msg").innerHTML = "модуль не ответил"; setWaitSeq = -1; });
+  });
+}
+
 /* ----------------------------------------- telegram */
 var tgLowSet = false;
 function tgRender(s) {

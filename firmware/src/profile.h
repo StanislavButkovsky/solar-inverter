@@ -38,3 +38,11 @@ extern const uint16_t INV_GAP_MS;
 // которому сказать нечего, определять не нужно: пустая версия в inv.cpp.
 String invProfileReport();
 String invTrace();                       // журнал обмена — последние строки, по порядку
+
+// Переключение настроек — только у профилей, которые это умеют (HS35).
+// what: 0 — приоритет работы (OPP), 1 — приоритет зарядки (CHP).
+// Вернёт "" — принято в работу, иначе причину отказа.
+String   invSetSetting(uint8_t what, uint8_t code);
+String   invSetStatusJson();             // {"state":…,"msg":…,"seq":N}
+uint32_t invSetSeq();                    // растёт на каждом завершённом переключении
+String   invSetLastMsg();

@@ -20,6 +20,10 @@ static bool        s_wasConnected = false;
 
 __attribute__((weak)) String invProfileReport() { return String(); }
 __attribute__((weak)) String invTrace() { return String(); }
+__attribute__((weak)) String invSetSetting(uint8_t, uint8_t) { return "этот инвертор переключать не умеет"; }
+__attribute__((weak)) String invSetStatusJson() { return "{\"state\":\"none\"}"; }
+__attribute__((weak)) uint32_t invSetSeq() { return 0; }
+__attribute__((weak)) String invSetLastMsg() { return String(); }
 
 void invOnBytes(const uint8_t* data, size_t n) {
     // Профиль сам решает, собрался ли ответ: у Modbus это длина и контрольная

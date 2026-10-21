@@ -64,6 +64,7 @@ const char* evText(EventKind k) {
     case EV_INV_FAULT:   return "авария инвертора";
     case EV_INV_DOWN:    return "связь с инвертором потеряна";
     case EV_INV_UP:      return "связь с инвертором установлена";
+    case EV_INV_SET:     return "переключение настройки инвертора";
     }
     return "событие";
 }

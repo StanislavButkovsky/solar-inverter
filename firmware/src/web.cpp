@@ -118,6 +118,7 @@ static String jsonState() {
     j += ",\"prioOut\":" + String(v.prioOut);
     j += ",\"prioChg\":" + String(v.prioChg);
     j += ",\"battType\":" + String(v.battType);
+    j += ",\"set\":" + invSetStatusJson();
     // За сегодня: счётчики самого инвертора, а нет их — статистика платы.
     float sPv, sGrid, sLoad;
     statsToday(sPv, sGrid, sLoad);
@@ -431,6 +432,21 @@ void webStart() {
         server.sendContent("");
     });
 
+    // Переключение настроек инвертора: what=opp|chp, code — из сверенных.
+    // Только под паролем модуля; без заданного пароля запись запрещена вовсе.
+    server.on("/api/inv/set", HTTP_GET, []() {
+        String err;
+        if (!otaPasswordSet())                              err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass)       err = "неверный пароль";
+        else {
+            String w = server.arg("what");
+            uint8_t what = w == "opp" ? 0 : w == "chp" ? 1 : 9;
+            err = what > 1 ? String("что переключать?") : invSetSetting(what, (uint8_t)server.arg("code").toInt());
+        }
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
     // Журнал обмена с инвертором и что профиль о нём узнал — текстом, для разбора.
     server.on("/api/inv", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
@@ -460,6 +476,14 @@ void webStart() {
 
 void webLoop() {
     server.handleClient();
+    // Переключение настройки завершилось — в журнал и в Telegram, с итогом.
+    static uint32_t setSeq = 0;
+    if (invSetSeq() != setSeq) {
+        setSeq = invSetSeq();
+        String m = invSetLastMsg();
+        evAdd(EV_INV_SET, m.c_str());
+        tgNotify("⚙️ " + m);
+    }
     if (s_wifiScanReq) {
         s_wifiScanReq = false;
         netScanStart();
