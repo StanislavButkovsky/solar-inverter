@@ -365,6 +365,7 @@ body.light pre.rep { background: #f2f4f8; }
         <div class="big"><b id="soc">—</b><span> %</span></div>
         <div class="track"><i id="socbar"></i></div>
         <div class="cap" id="soccap">заряд батареи</div>
+        <div class="sub" id="soceta" style="margin-top:4px"></div>
         <div style="margin-top:12px">
           <span class="chip gray" id="link" style="margin:0">нет связи</span>
           <span class="chip amber hidden" id="demo">демо-данные</span>
@@ -502,6 +503,7 @@ body.light pre.rep { background: #f2f4f8; }
       <tr><td>Батарея, мин. … макс.</td><td id="st_bv">—</td></tr>
       <tr><td>Температура, макс.</td><td id="st_t">—</td></tr>
       <tr><td>Загрузка, макс.</td><td id="st_lm">—</td></tr>
+      <tr><td>Заряд батареи, мин.</td><td id="st_smin">—</td></tr>
     </table>
   </div></div></div>
 
@@ -924,6 +926,12 @@ function render(s) {
                         (b.remainAh ? " · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 0) + " А·ч" : "")
                       : "инвертор не сообщает заряд · батарея " + fmt(b.v, 1) + " В")
           : "батарея не подключена");
+  // Прогноз — по среднему току за ~3 минуты, до порога «батарея разряжена»:
+  // ниже него инвертор всё равно отключит нагрузку, считать до нуля — обман.
+  var eta = "";
+  if (b.eta && l.fresh) eta = b.iAvg < 0 ? "хватит примерно на " + dur(b.eta) + " (до " + b.low + " %)"
+                                         : "до полного примерно " + dur(b.eta);
+  $("soceta").innerHTML = eta;
   // на всякий случай: страница может открыться не с самого верха
   if (!b.cellCount && !socKnown) $("socbar").style.width = "0%";
 
@@ -1420,6 +1428,7 @@ function stShow() {
   $("st_bv").innerHTML = t.bvmax ? (t.bvmin.toFixed(1) + " … " + t.bvmax.toFixed(1) + " В") : "—";
   $("st_t").innerHTML  = t.tmax ? (t.tmax + " °C") : "—";
   $("st_lm").innerHTML = t.lmax ? (t.lmax + " %") : "—";
+  $("st_smin").innerHTML = t.shas ? (t.smin + " %") : "—";
   stDraw();
 }
 

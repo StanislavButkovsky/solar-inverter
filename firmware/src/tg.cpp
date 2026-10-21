@@ -53,6 +53,10 @@ static String battLine() {
     String r = "батарея " + String(b.voltage, 1) + " В";
     if (b.socKnown) r += ", " + String(b.soc, 0) + " %";
     if (fabsf(b.current) > 0.5f) r += ", " + String(b.current, 1) + " А";
+    float avg = statsBattAvgA();
+    uint32_t eta = b.socKnown ? battEtaS(b.soc, b.capAh, avg, cfg().tgSocLow) : 0;
+    if (eta) r += avg < 0 ? "\nхватит примерно на " + dur(eta) + " (до " + String(cfg().tgSocLow) + " %)"
+                          : "\nдо полного примерно " + dur(eta);
     return r;
 }
 

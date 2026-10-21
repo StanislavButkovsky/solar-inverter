@@ -29,5 +29,10 @@ void   powerWrite(void (*emit)(const String&));   // мощности за су�
 bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня
-void   statsTodayOutages(uint32_t& seconds, uint16_t& count);                      // стереть всё накопленное — необратимо
+void   statsTodayOutages(uint32_t& seconds, uint16_t& count);
+float  statsBattAvgA();                   // средний ток батареи за ~3 мин, А: + заряд, − разряд
+
+// Прогноз: сколько секунд до порога lowPct при разряде или до 100 % при
+// заряде; 0 — посчитать нельзя (нет ёмкости, процента или ток мал).
+uint32_t battEtaS(float socPct, float capAh, float avgA, uint8_t lowPct);                      // стереть всё накопленное — необратимо
 void   statsSetTime(uint32_t epoch);      // время из браузера, только если своего нет

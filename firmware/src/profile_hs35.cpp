@@ -153,7 +153,7 @@ static void setSoc(float soc, SocSrc src, const char* line) {
     stateUpdate([&](BmsState& b) {
         b.soc = soc;
         b.socKnown = true;
-        if (s_capAh > 0) b.remainingMah = (uint32_t)(s_capAh * soc * 10.0f);   // А·ч × % → мА·ч
+        if (s_capAh > 0) { b.remainingMah = (uint32_t)(s_capAh * soc * 10.0f); b.capAh = s_capAh; }   // А·ч × % → мА·ч
     });
 }
 static void bmsFresh(BmsState& b) { b.linked = true; b.fresh = true; b.lastFrameMs = millis(); }

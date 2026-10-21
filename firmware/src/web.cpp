@@ -61,6 +61,11 @@ static String jsonState() {
     j += ",\"chgMos\":" + String(s.chargeMos ? "true" : "false");
     j += ",\"dsgMos\":" + String(s.dischargeMos ? "true" : "false");
     j += ",\"remainAh\":" + String(s.remainingMah / 1000.0, 2);
+    j += ",\"capAh\":" + String(s.capAh, 0);
+    float iAvg = statsBattAvgA();
+    j += ",\"iAvg\":" + String(iAvg, 1);
+    j += ",\"eta\":" + String(s.socKnown ? battEtaS(s.soc, s.capAh, iAvg, cfg().tgSocLow) : 0);
+    j += ",\"low\":" + String(cfg().tgSocLow);
 
     j += ",\"cells\":[";
     for (uint8_t i = 0; i < s.cellCount && i < MAX_CELLS; i++) {

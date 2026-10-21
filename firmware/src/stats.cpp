@@ -45,7 +45,8 @@ struct DayRec {
     uint16_t outages;
     int16_t  tempMax;
     uint8_t  loadMax, _r0;
-    uint8_t  _r[10];
+    uint8_t  socMin;                                   // минимум заряда за день + 1; 0 — не было
+    uint8_t  _r[9];
 };
 static_assert(sizeof(DayRec) == 64, "DayRec");
 
@@ -86,6 +87,9 @@ static float viaCounter(double now, double& last, float watts, float k) {
 static const uint32_t OUT_CONFIRM_MS = 10000;
 static uint32_t s_lossSince = 0;         // millis() первого показания «сети нет»
 
+static float    s_iAvg = 0;
+static bool     s_iAvgInit = false;
+
 static bool     s_inOut = false;
 static uint32_t s_outStartMs = 0;
 static int32_t  s_outSlot = -1;                       // ячейка текущего отключения в файле
@@ -93,6 +97,15 @@ static int32_t  s_outSlot = -1;                       // ячейка текущ
 // ------------------------------------------------------------------ время
 
 bool statsTimeValid() { return time(nullptr) > 1700000000; }
+
+float statsBattAvgA() { return s_iAvg; }
+
+uint32_t battEtaS(float soc, float capAh, float avgA, uint8_t low) {
+    if (capAh <= 0 || fabsf(avgA) < 0.5f) return 0;
+    float ah = avgA < 0 ? capAh * (soc - low) / 100.0f : capAh * (100.0f - soc) / 100.0f;
+    if (ah <= 0) return 0;
+    return (uint32_t)(ah / fabsf(avgA) * 3600.0f);
+}
 
 void statsTodayOutages(uint32_t& seconds, uint16_t& count) {
     const DayRec& d = s_bound ? s_day : s_pend;
@@ -187,6 +200,7 @@ static void mergeDay(DayRec& a, const DayRec& b) {
     a.pvWh += b.pvWh; a.chgWh += b.chgWh;
     a.outageS += b.outageS; a.dataS += b.dataS; a.outages += b.outages;
     if (b.tempMax > a.tempMax) a.tempMax = b.tempMax;
+    if (b.socMin && (!a.socMin || b.socMin < a.socMin)) a.socMin = b.socMin;
     if (b.loadMax > a.loadMax) a.loadMax = b.loadMax;
     minmax(a.gridVmin, a.gridVmax, b.gridVmin); minmax(a.gridVmin, a.gridVmax, b.gridVmax);
     minmax(a.battVmin, a.battVmax, b.battVmin); minmax(a.battVmin, a.battVmax, b.battVmax);
@@ -349,6 +363,18 @@ void statsLoop() {
         D.chgWh  += v.chgW  * k;  H.chgWh  += v.chgW  * k;
 
         if (s_bound) pwrSample(v, b);
+        if (b.fresh && b.socKnown) {
+            uint8_t s1 = (uint8_t)(b.soc + 0.5f) + 1;
+            if (!D.socMin || s1 < D.socMin) D.socMin = s1;
+        }
+        // Средний ток батареи для прогноза: мгновенный скачет вместе с
+        // нагрузкой, а прогноз «хватит на 3 ч» должен меняться спокойно.
+        // Экспонента с постоянной ~3 минуты.
+        if (b.fresh) {
+            float a = dt / 180.0f;
+            s_iAvg = s_iAvgInit ? s_iAvg + a * (b.current - s_iAvg) : b.current;
+            s_iAvgInit = true;
+        }
         if (v.gridOn) minmax(D.gridVmin, D.gridVmax, v.gridV);
         if (b.fresh)  minmax(D.battVmin, D.battVmax, b.voltage);
         if (v.tempC > D.tempMax)   D.tempMax = v.tempC;
@@ -437,6 +463,8 @@ static void totals(String& j, const DayRec& t) {
     put(j, "bvmin", t.battVmin, 1); put(j, "bvmax", t.battVmax, 1);
     put(j, "tmax", (uint32_t)(t.tempMax > 0 ? t.tempMax : 0));
     put(j, "lmax", (uint32_t)t.loadMax);
+    put(j, "smin", (uint32_t)(t.socMin ? t.socMin - 1 : 0));
+    put(j, "shas", (uint32_t)(t.socMin ? 1 : 0));
     j += "}";
 }
 

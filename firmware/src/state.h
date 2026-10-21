@@ -42,6 +42,7 @@ struct BmsState {
     bool     dischargeMos  = false;
     uint8_t  bmsLife       = 0;      // счётчик «жив», инкрементируется самой BMS
     uint32_t remainingMah  = 0;
+    float    capAh         = 0;      // полная ёмкость, А·ч; 0 — источник не отдаёт
 
     // --- 0x94 ---
     uint8_t  cellCount     = 0;
