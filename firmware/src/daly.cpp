@@ -1,3 +1,6 @@
+// Сборки без Bluetooth (NO_BLE: HS35, Asterion) берут daly_none.cpp.
+#if !defined(NO_BLE)
+
 #include "daly.h"
 #include "state.h"
 #include "cfg.h"
@@ -439,3 +442,5 @@ uint32_t dalyReleaseLeftS() {
     if (!dalyIsReleased()) return 0;
     return (s_releaseUntil - millis()) / 1000;
 }
+
+#endif

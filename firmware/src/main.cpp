@@ -3,7 +3,9 @@
 // Ядро 0: BLE-центральный (опрос батареи)
 // Ядро 1: Wi-Fi, веб-сервер, терминал, демо-данные
 #include <Arduino.h>
+#if !defined(NO_BLE)
 #include <NimBLEDevice.h>
+#endif
 #include "esp_bt.h"
 #include <WiFi.h>
 
@@ -49,6 +51,11 @@ void setup() {
     // десятки килобайт внутренней памяти впустую, а на рукопожатии TLS бота
     // свободной оставалось 140 байт (21.10.2026). Не привязана — Bluetooth не
     // поднимаем и отдаём его память системе до перезагрузки.
+#if defined(NO_BLE)
+    // Сборка без Bluetooth (HS35, Asterion): стека нет, память контроллера — системе.
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    (void)name;
+#else
     bool ble = true;
 #if defined(TARGET_HS35)
     ble = !cfg().bmsMac.isEmpty();
@@ -61,6 +68,7 @@ void setup() {
         Serial.println("[ble] батарея по Bluetooth не привязана — Bluetooth выключен, память отдана");
     }
     dalySetBle(ble);
+#endif
 
     netStart();
     webStart();
