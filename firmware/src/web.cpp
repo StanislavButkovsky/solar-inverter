@@ -12,6 +12,7 @@
 #include "json.h"
 #include "ota.h"
 #include "tg.h"
+#include "profile.h"
 #include <Update.h>
 #include <WebServer.h>
 #if defined(USB_PROBE)
@@ -428,6 +429,12 @@ void webStart() {
         server.send(200, "application/json; charset=utf-8", "");
         powerWrite([](const String& part) { server.sendContent(part); });
         server.sendContent("");
+    });
+
+    // Журнал обмена с инвертором и что профиль о нём узнал — текстом, для разбора.
+    server.on("/api/inv", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "text/plain; charset=utf-8", invProfileReport() + "\n--- обмен ---\n" + invTrace());
     });
 
     server.on("/api/outages", HTTP_GET, []() {

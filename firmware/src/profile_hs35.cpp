@@ -62,6 +62,16 @@ static size_t s_len = 0;
 // однозначного вида ещё и выравнивает её: всё до своей команды — отвечено
 // или потеряно. Короткий «(dd» принимается, только если в голове очереди
 // стоит команда настроек.
+// Журнал обмена: последние строки «→ команда» и «← ответ [чему приписан]»,
+// по порядку. По нему видно сдвиг ответов и правильность очереди —
+// понадобился, когда CPR?? прочитался не так, как на экране инвертора.
+static String  s_trace[40];
+static uint8_t s_tHead = 0, s_tLen = 0;
+static void trace(const String& line) {
+    s_trace[(s_tHead + s_tLen) % 40] = String(millis() / 100 % 10000) + " " + line;
+    if (s_tLen < 40) s_tLen++; else s_tHead = (s_tHead + 1) % 40;
+}
+
 static Kind    s_fifo[8];
 static uint8_t s_fHead = 0, s_fLen = 0;
 static void fifoPush(Kind k) {
@@ -108,6 +118,7 @@ size_t invBuildRequest(uint8_t, uint8_t* out, size_t cap) {
     }
     if (s_sent < 255) s_sent++;
     for (uint8_t k = 0; k < K_COUNT; k++) if (!strcmp(NAME[k], c)) { fifoPush((Kind)k); break; }
+    trace(String("→ ") + c);
     size_t n = strlen(c);
     if (n + 1 > cap) return 0;
     memcpy(out, c, n);
@@ -371,6 +382,12 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         const char* f[32];
         int nf = split(body, f, 32);
         Kind k = classify(line, f, nf);
+        {
+            String t = String("← ") + String(line).substring(0, 40);
+            if (k == K_SHORT || k == K_NAK || k == K_UNKNOWN) t += s_fLen ? String(" [голова: ") + NAME[s_fifo[s_fHead]] + "]" : String(" [очередь пуста]");
+            else t += String(" [") + NAME[k] + "]";
+            trace(t);
+        }
         if (k == K_SHORT) {
             Kind head = fifoPop();
             if (head == K_OPR || head == K_CPR || head == K_OPM || head == K_TBAT) {
@@ -403,6 +420,12 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         }
     }
     return true;                         // шаг ведёт сам профиль
+}
+
+String invTrace() {
+    String r;
+    for (uint8_t i = 0; i < s_tLen; i++) r += s_trace[(s_tHead + i) % 40] + "\n";
+    return r;
 }
 
 String invProfileReport() {
