@@ -264,37 +264,84 @@ void webStart() {
     });
 #endif
 
-    // Обновление прошивки со страницы. Пароль — в адресе (?pass=): обработчик
-    // загрузки видит аргументы адреса до первого байта файла, а поля формы —
-    // только после, когда решать уже поздно.
-    static String s_otaErr;
-    static bool   s_otaOk = false;
-    server.on("/api/ota", HTTP_POST, []() {
-        bool ok = s_otaOk && !Update.hasError();
-        server.sendHeader("Connection", "close");
-        server.send(200, "application/json; charset=utf-8",
-                    ok ? String("{\"ok\":true}")
-                       : "{\"ok\":false,\"error\":\"" + jsonEsc(s_otaErr.length() ? s_otaErr : String("файл не принят")) + "\"}");
-        if (ok) { Serial.println("[ota] прошивка со страницы принята, перезагрузка"); delay(500); ESP.restart(); }
-    }, []() {
-        HTTPUpload& up = server.upload();
-        if (up.status == UPLOAD_FILE_START) {
-            s_otaOk = false;
-            s_otaErr = "";
-            if (!otaPasswordSet() || server.arg("pass") != cfg().webPass) { s_otaErr = "неверный пароль"; return; }
-            Serial.printf("[ota] приём прошивки со страницы: %s\n", up.filename.c_str());
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) s_otaErr = Update.errorString();
-        } else if (up.status == UPLOAD_FILE_WRITE) {
-            if (s_otaErr.length()) return;
-            if (Update.write(up.buf, up.currentSize) != up.currentSize) s_otaErr = Update.errorString();
-        } else if (up.status == UPLOAD_FILE_END) {
-            if (s_otaErr.length()) { if (Update.isRunning()) Update.abort(); return; }
-            if (Update.end(true)) s_otaOk = true;      // образ проверен: чип, сумма
-            else s_otaErr = Update.errorString();
-        } else if (up.status == UPLOAD_FILE_ABORTED) {
-            if (Update.isRunning()) Update.abort();
-            s_otaErr = "загрузка прервана";
+    // Обновление прошивки со страницы — кусками по 16 КБ.
+    //
+    // Одним файлом не выходило: Update стирает флеш блоками по 64 КБ, на это
+    // время у ESP32 замирает и приём Wi-Fi, компьютер теряет пакеты, TCP
+    // растягивает паузы, а WebServer ждёт данных не дольше 5 с
+    // (HTTP_MAX_POST_WAIT, не переопределяется) и бросает соединение —
+    // 21.10.2026 загрузка рвалась на 64 и 786 КБ. Теперь кусок сначала целиком
+    // ложится в память, во флеш пишется уже после приёма, а ответ уходит после
+    // записи; браузер ждёт ответа сколько нужно. Повтор куска безопасен.
+    static const size_t PART_MAX = 16384;
+    static uint8_t* s_part = nullptr;
+    static size_t   s_partLen = 0, s_otaNext = 0;
+    static bool     s_partOk = false, s_otaOn = false;
+    auto otaAuth = []() -> bool {
+        if (otaPasswordSet() && server.arg("pass") == cfg().webPass) return true;
+        server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"неверный пароль\"}");
+        return false;
+    };
+    auto otaFail = [](const String& e) {
+        if (Update.isRunning()) Update.abort();
+        s_otaOn = false;
+        server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"" + jsonEsc(e) + "\"}");
+    };
+
+    server.on("/api/ota/begin", HTTP_GET, [otaAuth, otaFail]() {
+        if (!otaAuth()) return;
+        size_t size = strtoul(server.arg("size").c_str(), nullptr, 10);
+        if (Update.isRunning()) Update.abort();
+        if (!s_part) s_part = (uint8_t*)malloc(PART_MAX);
+        if (!s_part) { otaFail("не хватило памяти под кусок"); return; }
+        if (!Update.begin(size ? size : UPDATE_SIZE_UNKNOWN)) { otaFail(Update.errorString()); return; }
+        s_otaNext = 0;
+        s_otaOn = true;
+        Serial.printf("[ota] приём прошивки со страницы, %u байт\n", (unsigned)size);
+        server.send(200, "application/json", "{\"ok\":true,\"part\":" + String(PART_MAX) + "}");
+    });
+
+    server.on("/api/ota/part", HTTP_POST, [otaAuth, otaFail]() {
+        if (!otaAuth()) return;
+        if (!s_otaOn) { otaFail("загрузка не начата"); return; }
+        size_t off = strtoul(server.arg("off").c_str(), nullptr, 10);
+        if (!s_partOk) {                                    // кусок не дошёл — пусть пришлют ещё раз
+            server.send(200, "application/json", "{\"ok\":false,\"retry\":true,\"next\":" + String(s_otaNext) + "}");
+            return;
         }
+        if (off + s_partLen == s_otaNext) {                 // этот уже записан: ответ потерялся
+            server.send(200, "application/json", "{\"ok\":true,\"next\":" + String(s_otaNext) + "}");
+            return;
+        }
+        if (off != s_otaNext) { otaFail("куски пришли не по порядку"); return; }
+        if (Update.write(s_part, s_partLen) != s_partLen) { otaFail(Update.errorString()); return; }
+        s_otaNext += s_partLen;
+        server.send(200, "application/json", "{\"ok\":true,\"next\":" + String(s_otaNext) + "}");
+    }, []() {
+        HTTPRaw& r = server.raw();
+        if (r.status == RAW_START) {
+            s_partLen = 0;
+            s_partOk = false;
+        } else if (r.status == RAW_WRITE) {
+            if (s_part && s_partLen + r.currentSize <= PART_MAX) memcpy(s_part + s_partLen, r.buf, r.currentSize);
+            s_partLen += r.currentSize;
+        } else if (r.status == RAW_END) {
+            s_partOk = s_part && s_partLen <= PART_MAX;
+        } else {
+            s_partOk = false;
+        }
+    });
+
+    server.on("/api/ota/end", HTTP_GET, [otaAuth, otaFail]() {
+        if (!otaAuth()) return;
+        if (!s_otaOn) { otaFail("загрузка не начата"); return; }
+        if (!Update.end(true)) { otaFail(Update.errorString()); return; }   // образ проверен: чип, сумма
+        s_otaOn = false;
+        server.sendHeader("Connection", "close");
+        server.send(200, "application/json", "{\"ok\":true}");
+        Serial.println("[ota] прошивка со страницы принята, перезагрузка");
+        delay(500);
+        ESP.restart();
     });
 
     // Пароль на обновление. Задать с нуля может любой в домашней сети — так он

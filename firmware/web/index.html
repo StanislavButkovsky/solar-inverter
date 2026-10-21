@@ -1196,33 +1196,69 @@ function setPass() {
     if (r.ok) { otaKnown = null; $("pw_new").value = ""; }
   }, function () { $("ota_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }
+// Запрос с долгим ожиданием: проверка образа в конце бывает дольше 4 с,
+// которые даёт get(). body — кусок файла или null.
+function xhrJson(method, url, body, ms, cb, fail) {
+  var x = new XMLHttpRequest(), done = false;
+  function bad(why) { if (done) return; done = true; fail(why); }
+  x.open(method, url, true);
+  x.timeout = ms;
+  x.onload = function () {
+    if (done) return; done = true;
+    var r = {};
+    try { r = JSON.parse(x.responseText); } catch (e) { }
+    cb(r);
+  };
+  x.onerror = function () { bad("связь оборвалась"); };
+  x.ontimeout = function () { bad("модуль не ответил"); };
+  x.send(body);
+}
+
+// Прошивка уходит кусками по 16 КБ: модуль принимает кусок в память и
+// пишет во флеш уже после приёма. Одним файлом загрузка рвалась — пока
+// модуль стирает флеш, он не принимает данные дольше, чем ждёт сервер.
 function otaUpload() {
   var f = $("ota_file").files[0];
   if (!f) { $("ota_msg").innerHTML = "выберите файл firmware.bin"; return; }
-  var x = new XMLHttpRequest(), fd = new FormData();
-  fd.append("firmware", f, f.name);
-  busyRadio = true;                               // опрос на время загрузки молчит
-  $("ota_btn").disabled = true;
-  x.open("POST", "/api/ota?pass=" + encodeURIComponent($("ota_pass").value), true);
-  x.upload.onprogress = function (e) {
-    if (e.lengthComputable) $("ota_msg").innerHTML = "загрузка " + Math.round(100 * e.loaded / e.total) + " %";
-  };
-  x.onload = function () {
-    var r = {};
-    try { r = JSON.parse(x.responseText); } catch (e) { }
-    if (r.ok) {
+  var pw = encodeURIComponent($("ota_pass").value);
+  function fail(why) {
+    $("ota_msg").innerHTML = "не принято: " + why + " — прежняя прошивка на месте, можно попробовать ещё раз";
+    busyRadio = false; $("ota_btn").disabled = false;
+  }
+  function part(off, size, tries) {
+    if (off >= f.size) { finish(); return; }
+    xhrJson("POST", "/api/ota/part?off=" + off + "&pass=" + pw, f.slice(off, off + size), 30000, function (r) {
+      if (r.ok) {
+        $("ota_msg").innerHTML = "загрузка " + Math.round(100 * r.next / f.size) + " %";
+        part(r.next, size, 0);
+      } else if (r.retry && tries < 3) {
+        part(off, size, tries + 1);
+      } else {
+        fail(r.error || "кусок не принят");
+      }
+    }, function (why) {
+      if (tries < 3) setTimeout(function () { part(off, size, tries + 1); }, 1500);
+      else fail(why);
+    });
+  }
+  function finish() {
+    $("ota_msg").innerHTML = "проверяю образ…";
+    xhrJson("GET", "/api/ota/end?pass=" + pw, null, 30000, function (r) {
+      if (!r.ok) { fail(r.error || "образ не принят"); return; }
       $("ota_msg").innerHTML = "принято, модуль перезагружается — страница обновится сама";
       setTimeout(function () { location.reload(); }, 15000);
-    } else {
-      $("ota_msg").innerHTML = "не принято: " + (r.error || ("ответ " + x.status));
-      busyRadio = false; $("ota_btn").disabled = false;
-    }
-  };
-  x.onerror = function () {
-    $("ota_msg").innerHTML = "связь оборвалась во время загрузки — прежняя прошивка на месте, попробуйте ещё раз";
-    busyRadio = false; $("ota_btn").disabled = false;
-  };
-  x.send(fd);
+    }, function () {
+      // Ответ мог потеряться на перезагрузке — проверим по сборке после неё.
+      $("ota_msg").innerHTML = "модуль перезагружается — проверьте сборку после обновления страницы";
+      setTimeout(function () { location.reload(); }, 15000);
+    });
+  }
+  busyRadio = true;
+  $("ota_btn").disabled = true;
+  $("ota_msg").innerHTML = "начинаю…";
+  xhrJson("GET", "/api/ota/begin?size=" + f.size + "&pass=" + pw, null, 15000, function (r) {
+    if (r.ok) part(0, r.part || 16384, 0); else fail(r.error || "модуль отказал");
+  }, fail);
 }
 
 /* ----------------------------------------- частота обновления */
