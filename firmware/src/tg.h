@@ -23,3 +23,4 @@ String tgStateJson();                            // для /api/state
 String tgSetToken(const String& token);          // пусто — выключить; вернёт ошибку или ""
 void   tgUnbind();                               // отвязать чат, выдать новый код
 void   tgTest();                                 // прислать проверочное сообщение
+String tgReport(uint8_t what);                   // 1 неделя, 2 месяц, 3 прошлый месяц — для терминала

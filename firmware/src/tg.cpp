@@ -115,6 +115,109 @@ static String todayText() {
     return r;
 }
 
+// ------------------------------------------------------------------ сводки за период
+
+static String dm(uint32_t day) {
+    time_t t = (time_t)day * 86400;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    char b[8];
+    snprintf(b, sizeof(b), "%02d.%02d", tmv.tm_mday, tmv.tm_mon + 1);
+    return b;
+}
+
+static uint8_t mday(uint32_t day) {
+    time_t t = (time_t)day * 86400;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    return tmv.tm_mday;
+}
+
+static const char* const MONTH[] = { "январь", "февраль", "март", "апрель", "май", "июнь", "июль",
+                                     "август", "сентябрь", "октябрь", "ноябрь", "декабрь" };
+
+static String kwh(float wh) { String r = String(wh / 1000, wh >= 100000 ? 0 : 1); r.replace('.', ','); return r + " кВт·ч"; }
+
+// «(прошлая неделя 18,0 — +18 %)»; меньше 0,1 кВт·ч в прошлом — сравнивать не с чем.
+static String vs(float now, float before, const char* what) {
+    if (before < 100) return "";
+    int pct = (int)lroundf((now - before) / before * 100);
+    return String(" (") + what + " " + kwh(before) + ", " + (pct > 0 ? "+" : pct < 0 ? "−" : "±") + String(abs(pct)) + " %)";
+}
+
+// Сводка за дни from..to против prevFrom..prevTo. Только из loop().
+static String periodText(const String& title, uint32_t from, uint32_t to, uint32_t pFrom, uint32_t pTo, const char* prevName) {
+    StatSum a, b;
+    if (!statsSum(from, to, a)) return "Сводки нет: у модуля нет точного времени.";
+    bool havePrev = statsSum(pFrom, pTo, b) && b.dataS > 0;
+    if (!havePrev) memset(&b, 0, sizeof(b));
+    uint32_t days = to - from + 1;
+    if (!a.dataS) return title + "\nданных за этот период нет — модуль тогда не работал или статистику стирали.";
+    String r = title + "\n";
+    r += "солнце: " + kwh(a.pvWh) + vs(a.pvWh, b.pvWh, prevName) + "\n";
+    r += "из сети: " + kwh(a.gridWh) + vs(a.gridWh, b.gridWh, prevName) + "\n";
+    r += "нагрузка: " + kwh(a.loadWh) + vs(a.loadWh, b.loadWh, prevName) + "\n";
+    if (a.pvFcWh > 0) r += "прогноз солнца: " + kwh(a.pvFcWh) + " — факт " + String((int)lroundf(a.pvWh / a.pvFcWh * 100)) + " %\n";
+    if (cfg().price > 0) {
+        r += "экономия: ≈ " + String((int)lroundf(a.pvWh / 1000 * cfg().price)) + " ₽";
+        if (havePrev && b.pvWh > 0) r += " (" + String(prevName) + " " + String((int)lroundf(b.pvWh / 1000 * cfg().price)) + " ₽)";
+        r += "\n";
+    }
+    r += "без сети: " + (a.outages ? dur(a.outageS) + ", " + String(a.outages) + " раз" : String("не было"));
+    if (havePrev) r += String(" (") + prevName + ": " + (b.outages ? dur(b.outageS) + ", " + String(b.outages) + " раз" : String("не было")) + ")";
+    r += "\n";
+    // Модуль мог не работать часть периода — тогда цифры неполные, и это надо видеть.
+    float cover = a.dataS / 86400.0f;
+    if (cover < days - 0.5f) {
+        String c = String(cover, 1);
+        c.replace('.', ',');
+        r += "⚠️ данные есть за " + c + " из " + String(days) + " сут — цифры неполные\n";
+    }
+    if (a.pvFcWh <= 0 && cfg().lat == 0 && cfg().lon == 0) r += "(прогноз появится, когда в «Авто» будут координаты)\n";
+    r.trim();
+    return r;
+}
+
+static String weekText() {
+    uint32_t d = statsDay();
+    if (!d) return "Сводки нет: у модуля нет точного времени.";
+    return periodText("📅 Неделя " + dm(d - 6) + "–" + dm(d), d - 6, d, d - 13, d - 7, "прошлая неделя");
+}
+
+// full: за прошлый календарный месяц целиком (сводка 1-го числа);
+// иначе — с начала этого месяца против тех же дней прошлого.
+static String monthText(bool full) {
+    uint32_t d = statsDay();
+    if (!d) return "Сводки нет: у модуля нет точного времени.";
+    uint32_t first = d - (mday(d) - 1);
+    if (full) {
+        uint32_t to = first - 1, from = to - (mday(to) - 1);
+        uint32_t pTo = from - 1, pFrom = pTo - (mday(pTo) - 1);
+        time_t t = (time_t)from * 86400;
+        struct tm tmv;
+        gmtime_r(&t, &tmv);
+        return periodText("🗓 Итоги месяца: " + String(MONTH[tmv.tm_mon]) + " " + String(tmv.tm_year + 1900),
+                          from, to, pFrom, pTo, "месяцем раньше");
+    }
+    uint32_t n = d - first;                              // сколько дней прошло, кроме сегодня
+    uint32_t pFirst = (first - 1) - (mday(first - 1) - 1);
+    uint32_t pTo = pFirst + n < first - 1 ? pFirst + n : first - 1;
+    return periodText("🗓 Месяц " + dm(first) + "–" + dm(d), first, d, pFirst, pTo, "те же дни прошлого месяца");
+}
+
+// Команды бота приходят в его задаче, а файлы статистики читает только
+// loop(): запрос — флагом, текст собирает tgLoop().
+static volatile uint8_t s_reportReq = 0;              // 1 — неделя, 2 — месяц
+
+String tgReport(uint8_t what) { return what == 1 ? weekText() : what == 2 ? monthText(false) : monthText(true); }
+
+static void reportLoop() {
+    uint8_t r = s_reportReq;
+    if (!r) return;
+    s_reportReq = 0;
+    tgNotify(r == 1 ? weekText() : monthText(false));
+}
+
 // Последние отключения — из того же журнала, что на странице.
 static String outagesText() {
     String j = outagesJson(5);
@@ -138,7 +241,8 @@ static String outagesText() {
 }
 
 static const char* HELP =
-    "Команды:\n/status — что сейчас\n/today — итоги дня\n/outages — последние отключения сети\n"
+    "Команды:\n/status — что сейчас\n/today — итоги дня\n/week — за 7 дней\n/month — с начала месяца\n"
+    "/outages — последние отключения сети\n"
     "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
     "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
@@ -397,6 +501,8 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     else if (cmd == "/today")   send(cli, chat, todayText());
     else if (cmd == "/outages") send(cli, chat, outagesText());
     else if (cmd == "/boots")   send(cli, chat, "🔁 " + bootText());
+    else if (cmd == "/week")    s_reportReq = 1;
+    else if (cmd == "/month")   s_reportReq = 2;
     else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
     else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
     else if (cmd == "/yes")     send(cli, chat, setConfirm());
@@ -525,6 +631,7 @@ void tgLoop() {
     oppTestLoop();
     setLoop();
     csvBuild();
+    reportLoop();
     static uint32_t last = 0, lastFresh = 0;
     static bool lowSent = false, linkSent = false;
     static uint8_t prevFault = 0;
@@ -568,7 +675,11 @@ void tgLoop() {
         struct tm lt;
         gmtime_r(&loc, &lt);
         int32_t day = loc / 86400;
-        if (lt.tm_hour == 21 && day != summaryDay) { summaryDay = day; tgNotify(todayText()); }
+        if (lt.tm_hour == 21 && day != summaryDay) {
+            summaryDay = day;
+            tgNotify(todayText());
+            if (lt.tm_wday == 0) tgNotify(weekText());       // воскресенье — ещё и неделя
+        }
         if (summaryDay < 0) summaryDay = lt.tm_hour >= 21 ? day : day - 1;   // не слать сводку сразу после включения
         // 1-го числа в 9:00 — вся статистика файлом: бэкап на случай, если плата сломается.
         static int32_t csvMonth = -1;
@@ -576,6 +687,7 @@ void tgLoop() {
         if (csvMonth < 0 && !(lt.tm_mday == 1 && lt.tm_hour == 9)) csvMonth = month;
         if (lt.tm_mday == 1 && lt.tm_hour == 9 && month != csvMonth) {
             csvMonth = month;
+            tgNotify(monthText(true));
             s_csvCaption = "📎 Статистика за месяц и всё, что было раньше, — бэкап раз в месяц";
             s_csvReq = true;
         }

@@ -44,6 +44,7 @@ static void help() {
         "webpass <пароль>      пароль на обновление прошивки по сети (от 6 символов)\n"
         "tg token <токен>      бот Telegram (пусто — выключить); tg test, tg unbind\n"
         "time <unix-время>     задать время, если NTP недоступен\n"
+        "report week|month|last  сводка за неделю, месяц, прошлый месяц\n"
         "reboot                перезагрузка\n"
         "factoryreset          стереть настройки"));
 #if defined(USB_PROBE)
@@ -126,6 +127,9 @@ static void exec(String line) {
 
     if (line == "help")   { help(); return; }
     if (line == "status") { printStatus(); return; }
+    if (line == "report week")  { Serial.println(tgReport(1)); return; }
+    if (line == "report month") { Serial.println(tgReport(2)); return; }
+    if (line == "report last")  { Serial.println(tgReport(3)); return; }
     if (line == "stats clear") { statsClear(); return; }
     if (line.startsWith("tg token")) {
         String e = tgSetToken(line.substring(8));

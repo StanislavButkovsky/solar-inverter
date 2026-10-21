@@ -116,6 +116,22 @@ void statsTodayOutages(uint32_t& seconds, uint16_t& count) {
     count = d.outages;
 }
 
+uint32_t statsDay() { return s_bound ? s_day.day : 0; }
+
+static void dayAt(uint32_t d, DayRec& r);
+
+bool statsSum(uint32_t from, uint32_t to, StatSum& o) {
+    memset(&o, 0, sizeof(o));
+    if (!s_bound || from > to) return false;
+    for (uint32_t d = from; d <= to; d++) {
+        DayRec r;
+        dayAt(d, r);
+        o.pvWh += r.pvWh; o.gridWh += r.gridWh; o.loadWh += r.loadWh; o.battWh += r.battWh;
+        o.pvFcWh += r.pvFcWh; o.outageS += r.outageS; o.dataS += r.dataS; o.outages += r.outages;
+    }
+    return true;
+}
+
 void statsSetPvForecast(float wh) {
     if (s_bound && wh >= 0) s_day.pvFcWh = wh;
 }

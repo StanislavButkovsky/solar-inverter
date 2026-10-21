@@ -80,6 +80,7 @@ void setup() {
     dalyStart();
     rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
     statsStart();
+    evStart();                // журнал событий — во флеш, после монтирования LittleFS
     weatherStart();           // до бота: у них общий замок TLS
     tgStart();
 #if defined(USB_PROBE)

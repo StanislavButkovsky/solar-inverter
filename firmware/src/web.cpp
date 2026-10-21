@@ -222,7 +222,10 @@ void webStart() {
     // сканирование занимает пять секунд — держать на нём HTTP-запрос нельзя.
     server.on("/api/events", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "application/json; charset=utf-8", evJson());
+        uint16_t n = server.hasArg("n") ? server.arg("n").toInt() : 20;
+        if (n < 1) n = 1;
+        if (n > 300) n = 300;
+        server.send(200, "application/json; charset=utf-8", evJson(n));
     });
 
     server.on("/api/ble/scan", HTTP_GET, []() {

@@ -30,7 +30,13 @@ bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня
 void   statsTodayOutages(uint32_t& seconds, uint16_t& count);
-void   statsSetPvForecast(float wh);      // прогноз выработки на сегодня — из weather.cpp
+void   statsSetPvForecast(float wh);
+
+// Суммы за дни fromDay..toDay включительно (местные сутки от 1970) — для
+// сводок за неделю и месяц. Только из loop(): читает файл дней.
+struct StatSum { float pvWh, gridWh, loadWh, battWh, pvFcWh; uint32_t outageS, dataS; uint16_t outages; };
+bool     statsSum(uint32_t fromDay, uint32_t toDay, StatSum& out);   // false — времени нет
+uint32_t statsDay();                      // сегодня, местные сутки от 1970; 0 — времени нет      // прогноз выработки на сегодня — из weather.cpp
 // Вся история по дням CSV-таблицей, по частям: для выгрузки и бэкапа в бот.
 void   statsCsv(void (*emit)(const String&, void*), void* ctx);
 float  statsBattAvgA();                   // средний ток батареи за ~3 мин, А: + заряд, − разряд

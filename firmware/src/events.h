@@ -39,6 +39,11 @@ enum EventLevel : uint8_t { LV_INFO, LV_WARN, LV_ALARM, LV_GOOD };
 void        evAdd(EventKind kind, const char* detail = nullptr);
 const char* evText(EventKind kind);
 EventLevel  evLevel(EventKind kind);
-String      evJson();       // весь журнал, новые сверху
+// Журнал переживает перезагрузку: события с временем дописываются в
+// /events.bin (LittleFS, 300 последних кольцом, 14 КБ). Пока времени нет —
+// ждут в памяти до 5 минут: появилось время — пишутся с ним задним числом,
+// нет — без времени.
+void        evStart();      // после монтирования LittleFS (statsStart)
+String      evJson(uint16_t n = 20);   // последние n, новые сверху
 void        evWatchLoop();  // следит за снапшотом и сам заводит события
 const char* invModeName(uint8_t mode);

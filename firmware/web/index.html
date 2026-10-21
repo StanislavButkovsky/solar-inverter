@@ -437,6 +437,7 @@ body.light pre.rep { background: #f2f4f8; }
       <div class="col c1"><div class="card">
         <h2>Журнал событий</h2>
         <div id="log"><div class="sub">пусто</div></div>
+        <div style="margin-top:10px"><button class="wide" id="ev_more" onclick="evToggle()">Вся история</button></div>
       </div></div>
     </div>
 
@@ -1301,12 +1302,20 @@ function ago(sec) {
   return Math.floor(sec / 86400) + " сут назад";
 }
 
-function events() {
-  if (busyRadio) return;
-  get("/api/events", function (list) {
+// Обычно — 12 последних раз в 5 с. «Вся история» — до 300 из флеша модуля,
+// один раз: перечитывать 40 КБ каждые 5 секунд незачем.
+var evAll = false;
+function evToggle() {
+  evAll = !evAll;
+  $("ev_more").innerHTML = evAll ? "Свернуть" : "Вся история";
+  events(true);
+}
+function events(force) {
+  if (busyRadio || (evAll && !force)) return;
+  get("/api/events?n=" + (evAll ? 300 : 12), function (list) {
     if (!list.length) { $("log").innerHTML = '<div class="sub">пока ничего не случилось</div>'; return; }
     var h = "";
-    for (var i = 0; i < list.length && i < 12; i++) {
+    for (var i = 0; i < list.length; i++) {
       var e = list[i];
       // Время есть только после синхронизации с NTP; до неё честнее «сколько назад».
       var when = e.when ? e.when : ago(e.ago);
