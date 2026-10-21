@@ -123,7 +123,7 @@ static void simInv(uint32_t t, float battCur, float soc) {
         v.tempC     = 38 + (int)(6 * sun);
         v.faultCode = 0;
         v.prioOut   = 2;    // SBU
-        v.prioChg   = 0;    // сеть и солнце
+        v.prioChg   = 2;    // сеть и солнце
     });
 }
 

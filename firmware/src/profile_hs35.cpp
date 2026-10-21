@@ -32,11 +32,14 @@ const uint8_t  INV_NSTEPS = 1;           // круг ведёт сам проф�
 
 enum Kind : uint8_t {
     K_GPDAT0, K_GPV, K_GOP, K_GLINE, K_GBAT, K_BL, K_GMOD, K_GWS, K_GTMP, K_GBMS,
-    K_GCHG, K_F, K_SVFW, K_Q1, K_COUNT, K_NAK = 0xFE, K_UNKNOWN = 0xFF
+    K_GCHG, K_F, K_SVFW, K_Q1,
+    K_OPR, K_CPR, K_OPM, K_TBAT,                 // настройки: только чтение
+    K_COUNT, K_SHORT = 0xFD, K_NAK = 0xFE, K_UNKNOWN = 0xFF
 };
 static const char* const NAME[K_COUNT] = {
     "GPDAT0", "GPV", "GOP", "GLINE", "GBAT", "BL", "GMOD", "GWS", "GTMP", "GBMS",
     "GCHG", "F", "SVFW", "Q1",
+    "OPR??", "CPR??", "OPM??", "TBAT?",
 };
 
 // Живые данные через шаг, остальное по кругу. Номиналы и версия — изредка.
@@ -44,6 +47,7 @@ static const Kind CYCLE[] = {
     K_GPDAT0, K_GPV,   K_GPDAT0, K_GOP,  K_GPDAT0, K_GLINE, K_GPDAT0, K_GBMS,
     K_GPDAT0, K_BL,    K_GPDAT0, K_GWS,  K_GPDAT0, K_GMOD,  K_GPDAT0, K_GTMP,
     K_GPDAT0, K_F,     K_GPDAT0, K_SVFW,
+    K_GPDAT0, K_OPR,   K_GPDAT0, K_CPR,  K_GPDAT0, K_OPM,   K_GPDAT0, K_TBAT,
 };
 static uint8_t s_pos = 0;
 static uint8_t s_sent = 0;               // команд с последнего ответа G-ASCII
@@ -51,6 +55,32 @@ static bool    s_gSeen = false;          // хоть один ответ G-ASCII
 
 static char   s_buf[200];
 static size_t s_len = 0;
+
+// Очередь отправленных команд. Ответы HS35 приходят на команду позже, а
+// ответы на чтение настроек — «(00», «(01» — у OPR??, CPR?? и OPM?? одинаковы
+// по виду. Поэтому каждый ответ снимает одну команду из очереди, а ответ
+// однозначного вида ещё и выравнивает её: всё до своей команды — отвечено
+// или потеряно. Короткий «(dd» принимается, только если в голове очереди
+// стоит команда настроек.
+static Kind    s_fifo[8];
+static uint8_t s_fHead = 0, s_fLen = 0;
+static void fifoPush(Kind k) {
+    if (s_fLen == 8) { s_fHead = (s_fHead + 1) % 8; s_fLen--; }   // переполнение — забываем старую
+    s_fifo[(s_fHead + s_fLen) % 8] = k;
+    s_fLen++;
+}
+static Kind fifoPop() {
+    if (!s_fLen) return K_UNKNOWN;
+    Kind k = s_fifo[s_fHead];
+    s_fHead = (s_fHead + 1) % 8;
+    s_fLen--;
+    return k;
+}
+// Выровнять по однозначному ответу k: снять всё до него включительно.
+static void fifoSync(Kind k) {
+    for (uint8_t i = 0; i < s_fLen; i++)
+        if (s_fifo[(s_fHead + i) % 8] == k) { for (uint8_t j = 0; j <= i; j++) fifoPop(); return; }
+}
 
 // Первый ответ каждого вида — в NVS, для status дома.
 static Preferences s_nvs;
@@ -77,6 +107,7 @@ size_t invBuildRequest(uint8_t, uint8_t* out, size_t cap) {
         s_pos = (s_pos + 1) % sizeof(CYCLE);
     }
     if (s_sent < 255) s_sent++;
+    for (uint8_t k = 0; k < K_COUNT; k++) if (!strcmp(NAME[k], c)) { fifoPush((Kind)k); break; }
     size_t n = strlen(c);
     if (n + 1 > cap) return 0;
     memcpy(out, c, n);
@@ -107,7 +138,8 @@ static Kind classify(const char* line, const char* f[], int n) {
     if (!strncmp(line, "BL", 2))  return K_BL;
     if (line[0] == '#')           return n >= 4 ? K_F : K_UNKNOWN;      // #220.0 026 048.0 50.0
     if (line[0] != '(')           return K_UNKNOWN;
-    if (n == 1 && flen(f[0]) == 1) return K_GMOD;                       // (B
+    if (n == 1 && flen(f[0]) == 1 && isalpha((uint8_t)f[0][0])) return K_GMOD;   // (B
+    if (n == 1 && isdigit((uint8_t)f[0][0]) && flen(f[0]) <= 2) return K_SHORT;   // (00, (2 — настройки
     if (n == 2 && f[1][0] == '(') return K_SVFW;                        // (4.020 (20241011
     if (n == 3 && flen(f[1]) == 16) return K_GWS;                       // (00 0000… 0000…
     if (n == 8 && flen(f[7]) == 8) return K_Q1;
@@ -310,6 +342,14 @@ static void applyF(const char* f[]) {
     if (V > 100 && V < 260 && A > 1 && A < 100 && B >= 12 && B <= 60) { s_ratedVA = V * A; s_ratedBattV = B; }
 }
 
+static void applySetting(Kind k, long code) {
+    invUpdate([&](InvState& v) {
+        if (k == K_OPR && code >= 0 && code <= 2) v.prioOut = code;
+        if (k == K_CPR && code >= 0 && code <= 3) v.prioChg = code;
+        if (k == K_TBAT && code >= 0 && code <= 3) v.battType = code;
+    });
+}
+
 static void remember(Kind k, const char* line) {
     if (k >= K_COUNT || s_seen[k]) return;
     s_seen[k] = true;
@@ -331,7 +371,16 @@ bool invFeed(uint8_t, const uint8_t* data, size_t n) {
         const char* f[32];
         int nf = split(body, f, 32);
         Kind k = classify(line, f, nf);
-        if (k == K_NAK || k == K_UNKNOWN) continue;
+        if (k == K_SHORT) {
+            Kind head = fifoPop();
+            if (head == K_OPR || head == K_CPR || head == K_OPM || head == K_TBAT) {
+                remember(head, line);
+                applySetting(head, inum(f[0]));
+            }
+            continue;
+        }
+        if (k == K_NAK || k == K_UNKNOWN) { fifoPop(); continue; }
+        fifoSync(k);
         if (k != K_Q1) { s_gSeen = true; s_sent = 0; }
         remember(k, line);
         switch (k) {

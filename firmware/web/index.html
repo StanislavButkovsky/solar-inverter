@@ -318,6 +318,7 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Температура</td><td id="i_temp">—</td></tr>
           <tr><td>Приоритет выхода</td><td id="i_po">—</td></tr>
           <tr><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
+          <tr><td>Тип батареи</td><td id="i_bt">—</td></tr>
         </table>
       </div></div>
     </div>
@@ -810,8 +811,10 @@ function buildCells(n) {
 
 var INVNAME = ["нет связи", "ожидание", "работа от сети", "работа от батареи",
                "обход", "авария"];
-var PRIO_OUT = ["сеть в приоритете", "солнце в приоритете", "солнце, батарея, сеть"];
-var PRIO_CHG = ["сеть и солнце", "солнце в приоритете", "только солнце"];
+// Коды — как в протоколе G-ASCII (OPR??, CPR??, TBAT?); 255 — неизвестно.
+var PRIO_OUT = ["сеть в приоритете", "солнце в приоритете", "солнце → батарея → сеть (SBU)"];
+var PRIO_CHG = ["от сети в приоритете", "от солнца в приоритете", "от сети и солнца", "только от солнца"];
+var BATT_TYPE = ["свинцовая", "свинцовая заливная", "литиевая", "своя настройка"];
 
 function flow(id, on, rev) {
   var e = $(id);
@@ -890,6 +893,7 @@ function renderInv(v, b) {
   $("sol_grid").innerHTML = v.gridToday !== undefined ? v.gridToday.toFixed(2) + " кВт·ч" : "—";
   $("sol_load").innerHTML = v.loadToday !== undefined ? v.loadToday.toFixed(2) + " кВт·ч" : "—";
   $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "неизвестно") : "—";
+  $("i_bt").innerHTML   = live ? (BATT_TYPE[v.battType] || "неизвестно") : "—";
 }
 
 function render(s) {

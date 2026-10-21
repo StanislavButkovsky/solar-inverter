@@ -116,6 +116,7 @@ static String jsonState() {
     j += ",\"fault\":"  + String(v.faultCode);
     j += ",\"prioOut\":" + String(v.prioOut);
     j += ",\"prioChg\":" + String(v.prioChg);
+    j += ",\"battType\":" + String(v.battType);
     // За сегодня: счётчики самого инвертора, а нет их — статистика платы.
     float sPv, sGrid, sLoad;
     statsToday(sPv, sGrid, sLoad);
