@@ -16,6 +16,15 @@ void cfgInit() {
     g_cfg.tgToken = prefs.getString("tgtoken", "");
     g_cfg.tgChat  = prefs.getString("tgchat", "");
     g_cfg.tgSocLow = prefs.getUChar("tgsoclow", 20);
+    g_cfg.lat       = prefs.getFloat("lat", 0);
+    g_cfg.lon       = prefs.getFloat("lon", 0);
+    g_cfg.pvKwp     = prefs.getFloat("pvkwp", 0);
+    g_cfg.price     = prefs.getFloat("price", 0);
+    g_cfg.autoOn    = prefs.getBool("autoon", false);
+    g_cfg.autoBelow = prefs.getFloat("autobelow", 5);
+    g_cfg.autoFrom  = prefs.getUChar("autofrom", 23);
+    g_cfg.autoTo    = prefs.getUChar("autoto", 7);
+    g_cfg.autoSoc   = prefs.getUChar("autosoc", 95);
     if (g_cfg.pollMs < 100) g_cfg.pollMs = 100;
 }
 
@@ -32,6 +41,15 @@ void cfgSave() {
     prefs.putString("tgtoken", g_cfg.tgToken);
     prefs.putString("tgchat", g_cfg.tgChat);
     prefs.putUChar("tgsoclow", g_cfg.tgSocLow);
+    prefs.putFloat("lat", g_cfg.lat);
+    prefs.putFloat("lon", g_cfg.lon);
+    prefs.putFloat("pvkwp", g_cfg.pvKwp);
+    prefs.putFloat("price", g_cfg.price);
+    prefs.putBool("autoon", g_cfg.autoOn);
+    prefs.putFloat("autobelow", g_cfg.autoBelow);
+    prefs.putUChar("autofrom", g_cfg.autoFrom);
+    prefs.putUChar("autoto", g_cfg.autoTo);
+    prefs.putUChar("autosoc", g_cfg.autoSoc);
 }
 
 void cfgFactoryReset() {
@@ -39,4 +57,5 @@ void cfgFactoryReset() {
     g_cfg = Config();
     g_cfg.pollMs = 300;
     g_cfg.tgSocLow = 20;
+    g_cfg.autoBelow = 5; g_cfg.autoFrom = 23; g_cfg.autoTo = 7; g_cfg.autoSoc = 95;
 }

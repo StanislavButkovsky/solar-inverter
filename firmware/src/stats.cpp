@@ -6,6 +6,7 @@
 #include "state.h"
 #include "rtc.h"
 #include "tg.h"
+#include "cfg.h"
 #include <LittleFS.h>
 #include <sys/time.h>
 #include <time.h>
@@ -46,7 +47,9 @@ struct DayRec {
     int16_t  tempMax;
     uint8_t  loadMax, _r0;
     uint8_t  socMin;                                   // минимум заряда за день + 1; 0 — не было
-    uint8_t  _r[9];
+    uint8_t  _r1;
+    float    pvFcWh;                                   // прогноз выработки на этот день; 0 — не было
+    uint8_t  _r[4];
 };
 static_assert(sizeof(DayRec) == 64, "DayRec");
 
@@ -111,6 +114,10 @@ void statsTodayOutages(uint32_t& seconds, uint16_t& count) {
     const DayRec& d = s_bound ? s_day : s_pend;
     seconds = d.outageS;
     count = d.outages;
+}
+
+void statsSetPvForecast(float wh) {
+    if (s_bound && wh >= 0) s_day.pvFcWh = wh;
 }
 
 void statsToday(float& pvWh, float& gridWh, float& loadWh) {
@@ -199,6 +206,7 @@ static void mergeDay(DayRec& a, const DayRec& b) {
     a.gridWh += b.gridWh; a.loadWh += b.loadWh; a.battWh += b.battWh;
     a.pvWh += b.pvWh; a.chgWh += b.chgWh;
     a.outageS += b.outageS; a.dataS += b.dataS; a.outages += b.outages;
+    a.pvFcWh += b.pvFcWh;
     if (b.tempMax > a.tempMax) a.tempMax = b.tempMax;
     if (b.socMin && (!a.socMin || b.socMin < a.socMin)) a.socMin = b.socMin;
     if (b.loadMax > a.loadMax) a.loadMax = b.loadMax;
@@ -437,6 +445,7 @@ static void bar(String& j, uint32_t t, const DayRec& r, bool first) {
     put(j, "g", r.gridWh, 0); put(j, "l", r.loadWh, 0); put(j, "b", r.battWh, 0);
     put(j, "p", r.pvWh, 0);   put(j, "c", r.chgWh, 0);
     put(j, "o", r.outageS);   put(j, "n", (uint32_t)r.outages); put(j, "d", r.dataS);
+    put(j, "f", r.pvFcWh, 0);
     j += "}";
 }
 
@@ -459,6 +468,7 @@ static void totals(String& j, const DayRec& t) {
     put(j, "g", t.gridWh, 0); put(j, "l", t.loadWh, 0); put(j, "b", t.battWh, 0);
     put(j, "p", t.pvWh, 0);   put(j, "c", t.chgWh, 0);
     put(j, "o", t.outageS);   put(j, "n", (uint32_t)t.outages); put(j, "d", t.dataS);
+    put(j, "f", t.pvFcWh, 0);
     put(j, "gvmin", t.gridVmin, 1); put(j, "gvmax", t.gridVmax, 1);
     put(j, "bvmin", t.battVmin, 1); put(j, "bvmax", t.battVmax, 1);
     put(j, "tmax", (uint32_t)(t.tempMax > 0 ? t.tempMax : 0));
@@ -558,6 +568,51 @@ void statsClear() {
 // Последние сутки по 5 минут: массивы по рядам, null — данных не было.
 // Отдаётся по ряду за раз через emit(), а не одной строкой: пять рядов по
 // ~1,4 КБ плюс их склейка — это 7–14 КБ разом, а память на плате впритык.
+// Числа — с запятой, разделитель «;»: так таблицу без настройки открывает
+// русский Excel и LibreOffice. В начале — BOM, иначе Excel берёт кодировку
+// Windows-1251 и показывает кириллицу кракозябрами.
+static String num(float v, int dec) { String r = String(v, dec); r.replace('.', ','); return r; }
+
+void statsCsv(void (*emit)(const String&, void*), void* ctx) {
+    emit("\xEF\xBB\xBF" "Дата;Солнце, кВт·ч;Прогноз солнца, кВт·ч;Из сети, кВт·ч;Нагрузка, кВт·ч;"
+         "От батареи, кВт·ч;В батарею, кВт·ч;Без сети, мин;Отключений;Сеть мин., В;Сеть макс., В;"
+         "Батарея мин., В;Батарея макс., В;Заряд мин., %;Температура макс., °C;Нагрузка макс., %;"
+         "Данные были, ч;Экономия, ₽\r\n", ctx);
+    if (!s_bound) return;
+    uint32_t d0 = s_day.day;
+    // Файл целиком — 23 КБ, в PSRAM; без неё — по записи, чуть медленнее.
+    DayRec* all = (DayRec*)ps_malloc(NDAYS * sizeof(DayRec));
+    if (all) {
+        memset(all, 0, NDAYS * sizeof(DayRec));
+        File f = LittleFS.open(F_DAYS, "r");
+        if (f) { f.read((uint8_t*)all, NDAYS * sizeof(DayRec)); f.close(); }
+    }
+    float price = cfg().price;
+    for (uint32_t d = d0 - (NDAYS - 1); d <= d0; d++) {
+        DayRec r;
+        if (d == d0) r = s_day;
+        else if (all) r = all[d % NDAYS];
+        else readDay(d, r);
+        if (r.day != d || (!r.dataS && !r.pvWh && !r.loadWh)) continue;
+        time_t t = (time_t)d * 86400;
+        struct tm tmv;
+        gmtime_r(&t, &tmv);
+        char ds[12];
+        snprintf(ds, sizeof(ds), "%02d.%02d.%04d", tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_year + 1900);
+        String l = ds;
+        l += ";" + num(r.pvWh / 1000, 2) + ";" + (r.pvFcWh > 0 ? num(r.pvFcWh / 1000, 2) : String("")) +
+             ";" + num(r.gridWh / 1000, 2) + ";" + num(r.loadWh / 1000, 2) + ";" + num(r.battWh / 1000, 2) +
+             ";" + num(r.chgWh / 1000, 2) + ";" + String(r.outageS / 60) + ";" + String(r.outages) +
+             ";" + (r.gridVmin > 0 ? num(r.gridVmin, 1) : String("")) + ";" + (r.gridVmax > 0 ? num(r.gridVmax, 1) : String("")) +
+             ";" + (r.battVmin > 0 ? num(r.battVmin, 1) : String("")) + ";" + (r.battVmax > 0 ? num(r.battVmax, 1) : String("")) +
+             ";" + (r.socMin ? String(r.socMin - 1) : String("")) + ";" + (r.tempMax > 0 ? String(r.tempMax) : String("")) +
+             ";" + String(r.loadMax) + ";" + num(r.dataS / 3600.0f, 1) +
+             ";" + (price > 0 ? num(r.pvWh / 1000 * price, 0) : String("")) + "\r\n";
+        emit(l, ctx);
+    }
+    free(all);
+}
+
 void powerWrite(void (*emit)(const String&)) {
     if (!s_bound) { emit("{\"valid\":false}"); return; }
     uint32_t end = localNow() / PWR_STEP;

@@ -1,3 +1,5 @@
+#include "bootlog.h"
+#include "weather.h"
 #include "cli.h"
 #include "cfg.h"
 #include "net.h"
@@ -59,6 +61,8 @@ static void printStatus() {
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)ESP.getMinFreeHeap(),
                   (unsigned long)(millis() / 60000));
     Serial.printf("  PSRAM: %u байт, свободно %u\n", (unsigned)ESP.getPsramSize(), (unsigned)ESP.getFreePsram());
+    Serial.printf("--- перезапуски ---\n  %s\n", bootText().c_str());
+    Serial.printf("--- погода ---\n  %s\n", weatherJson().c_str());
     Serial.printf("--- telegram ---\n  %s\n", tgStateJson().c_str());
     Serial.println("--- время ---");
     if (statsTimeValid()) {
@@ -161,10 +165,11 @@ static void exec(String line) {
         return;
     }
 #endif
-    if (line == "reboot") { Serial.println("перезагрузка"); delay(200); ESP.restart(); }
+    if (line == "reboot") { Serial.println("перезагрузка"); bootMark("команда reboot"); delay(200); ESP.restart(); }
     if (line == "factoryreset") {
         cfgFactoryReset();
         Serial.println("настройки стёрты, перезагрузка");
+        bootMark("factoryreset");
         delay(200); ESP.restart();
     }
 
@@ -188,6 +193,7 @@ static void exec(String line) {
         cfg().apAfterSave = true;
         cfgSave();
         Serial.printf("сеть \"%s\" сохранена, перезагрузка\n", cfg().ssid.c_str());
+        bootMark("смена Wi-Fi");
         delay(300); ESP.restart();
     }
 

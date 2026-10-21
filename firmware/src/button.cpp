@@ -1,3 +1,4 @@
+#include "bootlog.h"
 #include <Arduino.h>
 #include "button.h"
 #include "cfg.h"
@@ -68,6 +69,7 @@ void buttonLoop() {
             Serial.println("[btn] сброс настроек и перезагрузка");
             blink(6, 60);
             cfgFactoryReset();
+            bootMark("сброс кнопкой");
             delay(200);
             ESP.restart();
         } else {

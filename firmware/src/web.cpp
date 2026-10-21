@@ -1,3 +1,5 @@
+#include "bootlog.h"
+#include "weather.h"
 #include "web.h"
 #include "webui_gz.h"
 #include "icon.h"
@@ -133,6 +135,8 @@ static String jsonState() {
     j += "\"sim\":" + String(simEnabled() ? "true" : "false");
     j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false");
     j += ",\"tg\":" + tgStateJson();
+    j += ",\"boot\":" + bootJson();
+    j += ",\"wx\":" + weatherJson();
     // Память: если что-то течёт (TLS бота, строки), это видно здесь со временем.
     j += ",\"heap\":{\"free\":" + String(ESP.getFreeHeap()) + ",\"max\":" + String(ESP.getMaxAllocHeap()) +
          ",\"min\":" + String(ESP.getMinFreeHeap()) + ",\"psram\":" + String(ESP.getPsramSize()) +
@@ -209,6 +213,7 @@ void webStart() {
         if (server.hasArg("ssid")) cfg().apAfterSave = true;
         cfgSave();
         server.send(200, "application/json", "{\"ok\":true}");
+        bootMark("сохранены настройки");
         delay(300);
         ESP.restart();
     });
@@ -375,6 +380,7 @@ void webStart() {
         server.sendHeader("Connection", "close");
         server.send(200, "application/json", "{\"ok\":true}");
         Serial.println("[ota] прошивка со страницы принята, перезагрузка");
+        bootMark("обновление прошивки");
         delay(500);
         ESP.restart();
     });
@@ -413,6 +419,61 @@ void webStart() {
         if (server.hasArg("unbind")) tgUnbind();
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // Погода, панели, цена, ночная зарядка. Под паролем модуля: автоматика
+    // сама переключает инвертор.
+    server.on("/api/auto", HTTP_GET, []() {
+        String err;
+        if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+        else {
+            Config& c = cfg();
+            auto num = [](const char* k, float lo, float hi, float& out, String& e, const char* what) {
+                if (!server.hasArg(k)) return;
+                String v = server.arg(k);
+                v.replace(',', '.');
+                v.trim();
+                float f = v.length() ? v.toFloat() : 0;
+                if (f < lo || f > hi) e = String(what) + ": от " + String(lo, 0) + " до " + String(hi, 0);
+                else out = f;
+            };
+            float lat = c.lat, lon = c.lon, kwp = c.pvKwp, price = c.price, below = c.autoBelow, from = c.autoFrom,
+                  to = c.autoTo, soc = c.autoSoc;
+            num("lat", -90, 90, lat, err, "широта");
+            num("lon", -180, 180, lon, err, "долгота");
+            num("kwp", 0, 100, kwp, err, "мощность панелей, кВт");
+            num("price", 0, 100, price, err, "цена кВт·ч");
+            num("below", 0, 200, below, err, "порог прогноза, кВт·ч");
+            num("from", 0, 23, from, err, "начало ночи");
+            num("to", 0, 23, to, err, "конец ночи");
+            num("soc", 30, 100, soc, err, "заряд до");
+            if (err.isEmpty()) {
+                bool moved = lat != c.lat || lon != c.lon;
+                c.lat = lat; c.lon = lon; c.pvKwp = kwp; c.price = price; c.autoBelow = below;
+                c.autoFrom = (uint8_t)from; c.autoTo = (uint8_t)to; c.autoSoc = (uint8_t)soc;
+                if (server.hasArg("on")) c.autoOn = server.arg("on") == "1";
+                cfgSave();
+                if (moved) weatherRefresh();
+            }
+        }
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // Вся история по дням — таблицей для Excel.
+    server.on("/api/stats.csv", HTTP_GET, []() {
+        char name[48];
+        time_t loc = time(nullptr) + 3 * 3600;
+        struct tm lt;
+        gmtime_r(&loc, &lt);
+        snprintf(name, sizeof(name), "attachment; filename=\"solar-%04d-%02d-%02d.csv\"", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+        server.sendHeader("Content-Disposition", name);
+        server.sendHeader("Cache-Control", "no-store");
+        server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server.send(200, "text/csv; charset=utf-8", "");
+        statsCsv([](const String& part, void*) { server.sendContent(part); }, nullptr);
+        server.sendContent("");
     });
 
     // Статистика: day | week | month | year. Месяцы собираются из дней на лету.

@@ -1,3 +1,4 @@
+#include "bootlog.h"
 #include "net.h"
 #include "cfg.h"
 #include <WiFi.h>
@@ -199,6 +200,7 @@ void netLoop() {
         if (s_fails >= FAILS_BEFORE_REBOOT) {
             Serial.println("[net] сеть не вернулась, перезагружаюсь");
             evAdd(EV_WIFI_DOWN, "перезагрузка");
+            bootMark("Wi-Fi не вернулся");
             delay(300);
             ESP.restart();
         }

@@ -1,6 +1,7 @@
 #include "ota.h"
 #include "cfg.h"
 #include <ArduinoOTA.h>
+#include "bootlog.h"
 #include <Update.h>
 #include "esp_ota_ops.h"
 #include "build_info.h"
@@ -33,7 +34,7 @@ void otaStart() {
     ArduinoOTA.setPassword(cfg().webPass.c_str());
     ArduinoOTA.setMdnsEnabled(false);        // mDNS уже поднимает net.cpp под именем solar
     ArduinoOTA.onStart([]() { Serial.println("[ota] приём прошивки с компьютера…"); });
-    ArduinoOTA.onEnd([]()   { Serial.println("[ota] прошивка принята, перезагрузка"); });
+    ArduinoOTA.onEnd([]()   { Serial.println("[ota] прошивка принята, перезагрузка"); bootMark("обновление прошивки"); });
     ArduinoOTA.onError([](ota_error_t e) { Serial.printf("[ota] ошибка %u\n", (unsigned)e); });
     ArduinoOTA.begin();
     s_started = true;

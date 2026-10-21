@@ -22,6 +22,8 @@
 #include "rtc.h"
 #include "ota.h"
 #include "tg.h"
+#include "bootlog.h"
+#include "weather.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -37,6 +39,7 @@ static String deviceName() {
 void setup() {
     Serial.begin(115200);
     delay(300);
+    bootStart();
 
     stateInit();
     cfgInit();
@@ -77,6 +80,7 @@ void setup() {
     dalyStart();
     rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
     statsStart();
+    weatherStart();           // до бота: у них общий замок TLS
     tgStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
@@ -84,7 +88,7 @@ void setup() {
     usbProbeStart();
 #endif
 
-    evAdd(EV_BOOT);
+    evAdd(EV_BOOT, bootReason().c_str());
     cliBanner();
     Serial.print("> ");
 }
@@ -99,5 +103,7 @@ void loop() {
     rtcLoop();
     otaLoop();
     tgLoop();
+    bootLoop();
+    weatherLoop();
     delay(2);
 }

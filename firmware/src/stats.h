@@ -30,6 +30,9 @@ bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня
 void   statsTodayOutages(uint32_t& seconds, uint16_t& count);
+void   statsSetPvForecast(float wh);      // прогноз выработки на сегодня — из weather.cpp
+// Вся история по дням CSV-таблицей, по частям: для выгрузки и бэкапа в бот.
+void   statsCsv(void (*emit)(const String&, void*), void* ctx);
 float  statsBattAvgA();                   // средний ток батареи за ~3 мин, А: + заряд, − разряд
 
 // Прогноз: сколько секунд до порога lowPct при разряде или до 100 % при

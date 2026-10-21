@@ -5,6 +5,8 @@
 #include "stats.h"
 #include "ota.h"
 #include "profile.h"
+#include "bootlog.h"
+#include "weather.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -105,6 +107,10 @@ static String todayText() {
     r += "из сети: " + String(grid / 1000, 2) + " кВт·ч\n";
     r += "нагрузка: " + String(load / 1000, 2) + " кВт·ч\n";
     r += "без сети: " + (outN ? dur(outS) + ", " + String(outN) + " раз" : String("не было")) + "\n";
+    float fc0 = weatherPvKwh(0), fc1 = weatherPvKwh(1);
+    if (fc0 > 0) r += "прогноз солнца был " + String(fc0, 1) + " кВт·ч — факт " + String(pv / 1000 / fc0 * 100, 0) + " %\n";
+    if (fc1 >= 0) r += "завтра по прогнозу: " + String(fc1, 1) + " кВт·ч\n";
+    if (cfg().price > 0) r += "солнце сэкономило ≈ " + String(pv / 1000 * cfg().price, 0) + " ₽\n";
     r += battLine();
     return r;
 }
@@ -132,7 +138,9 @@ static String outagesText() {
 }
 
 static const char* HELP =
-    "Команды:\n/status — что сейчас\n/today — итоги дня\n/outages — последние отключения сети\n/help — этот список";
+    "Команды:\n/status — что сейчас\n/today — итоги дня\n/outages — последние отключения сети\n"
+    "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
+    "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
 // ------------------------------------------------------------------ очередь
 
@@ -188,6 +196,51 @@ static bool api(WiFiClientSecure& cli, const String& method, const String& body,
 static void send(WiFiClientSecure& cli, const String& chat, const String& text) {
     String out;
     api(cli, "sendMessage", "chat_id=" + chat + "&text=" + urlenc(text) + "&disable_web_page_preview=1", out);
+}
+
+// Таблица статистики файлом. Собирает её loop() — там живёт статистика и её
+// файлы, — а отправляет задача бота: s_csvReq → loop() → s_csv → задача.
+// Строка на 20–30 КБ уходит в PSRAM.
+static volatile bool s_csvReq = false;
+static String* volatile s_csv = nullptr;
+static String s_csvCaption;
+
+static void csvBuild() {
+    if (!s_csvReq || s_csv) return;
+    s_csvReq = false;
+    String* c = new String();
+    c->reserve(32768);
+    statsCsv([](const String& part, void* ctx) { *(String*)ctx += part; }, c);
+    s_csv = c;
+}
+
+static void sendCsv(WiFiClientSecure& cli, const String& chat) {
+    String* csv = s_csv;
+    if (!csv) return;
+    time_t loc = time(nullptr) + 3 * 3600;
+    struct tm lt;
+    gmtime_r(&loc, &lt);
+    char name[40];
+    snprintf(name, sizeof(name), "solar-%04d-%02d-%02d.csv", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+    String bnd = "----solar" + String(esp_random(), HEX);
+    String body;
+    body.reserve(csv->length() + 600);
+    body = "--" + bnd + "\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n" + chat + "\r\n";
+    body += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n" + s_csvCaption + "\r\n";
+    body += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"" + name +
+            "\"\r\nContent-Type: text/csv\r\n\r\n";
+    body += *csv;
+    body += "\r\n--" + bnd + "--\r\n";
+    s_csv = nullptr;
+    delete csv;
+    HTTPClient http;
+    http.setTimeout(30000);
+    http.setConnectTimeout(8000);
+    if (!http.begin(cli, "https://api.telegram.org/bot" + token() + "/sendDocument")) return;
+    http.addHeader("Content-Type", "multipart/form-data; boundary=" + bnd);
+    int code = http.POST((uint8_t*)body.c_str(), body.length());
+    http.end();
+    if (code != 200) s_err = "таблица не ушла: ответ " + String(code);
 }
 
 // Строковое поле после ключа: "key":"значение" — без разбора экранирования,
@@ -256,6 +309,63 @@ static void oppTestLoop() {
     }
 }
 
+// Переключение режимов из бота: /opp pbg → «точно?» → /yes в течение 2 минут.
+// Подтверждение — потому что одна опечатка в чате не должна переводить дом
+// на сеть. Само переключение — в loop() (tgLoop), там же, где его делает
+// страница; итог приходит обычным «⚙️ OPP → PBG: встало».
+static const char* const SET_N[2][3] = { { "GRD", "PU", "PBG" }, { "PV", "PNG", "OPV" } };
+static const char* const SET_D[2][3] = {
+    { "сеть в приоритете", "солнце в приоритете", "солнце → батарея → сеть" },
+    { "заряд от солнца в приоритете", "заряд от солнца и сети", "заряд только от солнца" } };
+static int8_t   s_askWhat = -1, s_askCode = -1;      // ждёт /yes
+static uint32_t s_askMs = 0;
+static volatile int8_t s_doWhat = -1, s_doCode = -1; // подтверждено — выполнить в loop()
+
+static String setMenu(uint8_t what) {
+    InvState v = invSnapshot();
+    uint8_t now = what ? v.prioChg : v.prioOut;
+    String r = String(what ? "CHP — приоритет зарядки" : "OPP — приоритет работы") + ", сейчас " +
+               (now < 3 ? SET_N[what][now] : "неизвестно") + ".\nВарианты:";
+    for (uint8_t i = 0; i < 3; i++) {
+        String c = SET_N[what][i];
+        c.toLowerCase();
+        r += String("\n/") + (what ? "chp_" : "opp_") + c + " — " + SET_D[what][i];
+    }
+    return r;
+}
+
+static String setAsk(uint8_t what, String arg) {
+    arg.trim();
+    arg.toUpperCase();
+    if (!arg.length()) return setMenu(what);
+    int8_t code = -1;
+    for (uint8_t i = 0; i < 3; i++) if (arg == SET_N[what][i]) code = i;
+    if (code < 0) return "Такого варианта нет.\n\n" + setMenu(what);
+    InvState v = invSnapshot();
+    if (!v.fresh) return "Инвертор сейчас не на связи — переключить не получится.";
+    uint8_t now = what ? v.prioChg : v.prioOut;
+    if (now == code) return String("Уже стоит ") + SET_N[what][code] + ".";
+    s_askWhat = what; s_askCode = code; s_askMs = millis();
+    return String("Переключить ") + (what ? "CHP" : "OPP") + ": " + (now < 3 ? SET_N[what][now] : "?") + " → " +
+           SET_N[what][code] + " (" + SET_D[what][code] + ")?\nНажмите /yes в течение 2 минут.";
+}
+
+static String setConfirm() {
+    if (s_askWhat < 0 || millis() - s_askMs > 120000) { s_askWhat = -1; return "Подтверждать нечего — сначала /opp или /chp."; }
+    s_doCode = s_askCode;
+    s_doWhat = s_askWhat;
+    s_askWhat = -1;
+    return "Отправляю инвертору, итог пришлю.";
+}
+
+static void setLoop() {
+    if (s_doWhat < 0) return;
+    uint8_t what = s_doWhat, code = s_doCode;
+    s_doWhat = -1;
+    String e = invSetSetting(what, code);
+    if (e.length()) tgNotify("⚙️ Не переключил: " + e);
+}
+
 static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     text.trim();
     int sp = text.indexOf(' ');
@@ -264,6 +374,11 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     int at = cmd.indexOf('@');
     if (at > 0) cmd = cmd.substring(0, at);
     cmd.toLowerCase();
+    // /opp_pbg — то же, что «/opp pbg», но нажимается в сообщении бота целиком.
+    if ((cmd.startsWith("/opp_") || cmd.startsWith("/chp_")) && cmd.length() > 5) {
+        arg = cmd.substring(5);
+        cmd = cmd.substring(0, 4);
+    }
 
     String bound = chatId();
     if (bound.isEmpty()) {                               // привязки ещё нет
@@ -281,6 +396,12 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     if (cmd == "/status" || cmd == "/start") send(cli, chat, statusText());
     else if (cmd == "/today")   send(cli, chat, todayText());
     else if (cmd == "/outages") send(cli, chat, outagesText());
+    else if (cmd == "/boots")   send(cli, chat, "🔁 " + bootText());
+    else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
+    else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
+    else if (cmd == "/yes")     send(cli, chat, setConfirm());
+    else if (cmd == "/forecast" || cmd == "/weather") send(cli, chat, weatherText());
+    else if (cmd == "/csv") { s_csvCaption = "📎 Статистика по дням — открывается в Excel"; s_csvReq = true; send(cli, chat, "Собираю таблицу, сейчас пришлю."); }
     else if (cmd == "/opptest") { s_oppReq = true; send(cli, chat, "Тест OPP принят — начну в течение пары секунд."); }
     else                        send(cli, chat, HELP);
 }
@@ -313,17 +434,20 @@ static void task(void*) {
             vTaskDelay(pdMS_TO_TICKS(3000));
             continue;
         }
+        tlsLock();                               // TLS один за раз — с погодой делим
         if (!s_bot.length()) {
             String out;
             if (api(cli, "getMe", "", out)) s_bot = "@" + field(out, "username", 0);
-            else { vTaskDelay(pdMS_TO_TICKS(15000)); continue; }
+            else { cli.stop(); tlsUnlock(); vTaskDelay(pdMS_TO_TICKS(15000)); continue; }
         }
         String chat = chatId();
         if (chat.length() && !greeted) {
             greeted = true;
-            send(cli, chat, String("🟢 Модуль на связи, сборка ") + fwBuild());
+            send(cli, chat, String(bootWasBad() ? "⚠️" : "🟢") + " Модуль на связи, сборка " + fwBuild() +
+                            "\nперезапуск: " + bootReason());
         }
         if (s_testReq) { s_testReq = false; if (chat.length()) send(cli, chat, "Проверка: бот работает.\n\n" + statusText()); }
+        if (chat.length() && s_csv) sendCsv(cli, chat);
         char* msg;
         while (chat.length() && xQueueReceive(s_q, &msg, 0) == pdTRUE) {
             send(cli, chat, msg);
@@ -335,15 +459,72 @@ static void task(void*) {
         // и обновление прошивки не нашло 4 КБ). Закрыли — память свободна до
         // следующего опроса; пришло уведомление — очередь разбудит раньше.
         cli.stop();
+        tlsUnlock();
         uint32_t t0 = millis();
-        while (millis() - t0 < POLL_MS && !uxQueueMessagesWaiting(s_q) && !s_testReq) vTaskDelay(pdMS_TO_TICKS(200));
+        while (millis() - t0 < POLL_MS && !uxQueueMessagesWaiting(s_q) && !s_testReq && !s_csv) vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
 // ------------------------------------------------------------------ пороги
 
+// Тревога с выдержкой: условие должно продержаться holdS, и снимается она
+// только по своему, более мягкому условию — иначе на границе порога бот
+// писал бы каждые 5 секунд.
+struct Alarm { uint32_t since = 0; bool sent = false; };
+
+static void alarmStep(Alarm& a, bool bad, bool good, uint32_t holdS, const String& onText, const String& offText) {
+    if (!a.sent) {
+        if (!bad) { a.since = 0; return; }
+        if (!a.since) a.since = millis();
+        if (millis() - a.since >= holdS * 1000) { a.sent = true; a.since = 0; tgNotify(onText); }
+    } else {
+        if (!good) { a.since = 0; return; }
+        if (!a.since) a.since = millis();
+        if (millis() - a.since >= holdS * 1000) { a.sent = false; a.since = 0; if (offText.length()) tgNotify(offText); }
+    }
+}
+
+// Пороги — с запасом до того, что инвертор делает сам: греется до 75 °C
+// (у HS35 обычно 50–60), нагрузка 90 % (дальше он отключает выход),
+// сеть 190–250 В (норма 230 В ±10 %, ГОСТ 29322).
+static const int16_t TEMP_HOT = 75, TEMP_OK = 65;
+static const uint8_t LOAD_HIGH = 90, LOAD_OK = 75;
+static const float   GRID_LO = 190, GRID_HI = 250, GRID_OK_LO = 200, GRID_OK_HI = 245;
+
+static void alarmsLoop(const InvState& v, const BmsState& b) {
+    static Alarm hot, load, volt, pv;
+    if (!v.fresh || millis() < 120000) return;
+    alarmStep(hot, v.tempC >= TEMP_HOT, v.tempC <= TEMP_OK, 60,
+              "🌡 Инвертор греется: " + String(v.tempC) + " °C. Проверьте, не закрыта ли вентиляция.",
+              "✅ Температура инвертора в норме: " + String(v.tempC) + " °C");
+    alarmStep(load, v.loadPct >= LOAD_HIGH, v.loadPct <= LOAD_OK, 20,
+              "🔥 Нагрузка " + String(v.loadPct) + " % (" + String(v.outW, 0) +
+              " Вт) — близко к пределу, инвертор может отключить выход. Выключите что-нибудь мощное.",
+              "✅ Нагрузка снизилась: " + String(v.loadPct) + " %");
+    bool vBad = v.gridOn && v.gridV > 50 && (v.gridV < GRID_LO || v.gridV > GRID_HI);
+    bool vOk  = !v.gridOn || (v.gridV >= GRID_OK_LO && v.gridV <= GRID_OK_HI);
+    alarmStep(volt, vBad, vOk, 60,
+              "⚡ Напряжение сети " + String(v.gridV, 0) + " В — вне нормы (" + String(GRID_LO, 0) + "–" +
+              String(GRID_HI, 0) + " В). Технике от сети напрямую это вредно.",
+              "✅ Напряжение сети в норме: " + String(v.gridV, 0) + " В");
+    // Панели: солнце по прогнозу есть (≥ 300 Вт/м² в этот час), а выработки
+    // нет полчаса. Без погоды молчим — в пасмурный день это не поломка.
+    // Полная батарея при малой нагрузке — инвертор сам придерживает панели,
+    // это тоже не поломка.
+    int rad = weatherNowRad();
+    bool full = b.socKnown && b.soc >= 95;
+    bool pvBad = rad >= 300 && v.pvW < 50 && !full;
+    bool pvOk  = v.pvW >= 150 || (rad >= 0 && rad < 150);
+    alarmStep(pv, pvBad, pvOk, 1800,
+              "☀️ Солнце есть (по прогнозу " + String(rad) + " Вт/м²), а панели дают " + String(v.pvW, 0) +
+              " Вт уже полчаса. Проверьте автомат панелей, разъёмы, не засыпало ли их снегом.",
+              "✅ Панели снова дают ток: " + String(v.pvW, 0) + " Вт");
+}
+
 void tgLoop() {
     oppTestLoop();
+    setLoop();
+    csvBuild();
     static uint32_t last = 0, lastFresh = 0;
     static bool lowSent = false, linkSent = false;
     static uint8_t prevFault = 0;
@@ -368,6 +549,7 @@ void tgLoop() {
             lowSent = false;
         }
     }
+    alarmsLoop(v, b);
     if (v.fresh) {
         if (v.faultCode != prevFault) {
             tgNotify(v.faultCode ? "❗ Авария инвертора, код " + String(v.faultCode) : String("✅ Авария инвертора снята"));
@@ -388,6 +570,15 @@ void tgLoop() {
         int32_t day = loc / 86400;
         if (lt.tm_hour == 21 && day != summaryDay) { summaryDay = day; tgNotify(todayText()); }
         if (summaryDay < 0) summaryDay = lt.tm_hour >= 21 ? day : day - 1;   // не слать сводку сразу после включения
+        // 1-го числа в 9:00 — вся статистика файлом: бэкап на случай, если плата сломается.
+        static int32_t csvMonth = -1;
+        int32_t month = (lt.tm_year + 1900) * 12 + lt.tm_mon;
+        if (csvMonth < 0 && !(lt.tm_mday == 1 && lt.tm_hour == 9)) csvMonth = month;
+        if (lt.tm_mday == 1 && lt.tm_hour == 9 && month != csvMonth) {
+            csvMonth = month;
+            s_csvCaption = "📎 Статистика за месяц и всё, что было раньше, — бэкап раз в месяц";
+            s_csvReq = true;
+        }
     }
 }
 
