@@ -132,6 +132,9 @@ static String jsonState() {
     j += ",\"gridToday\":" + String(v.gridKwhToday >= 0 ? v.gridKwhToday : sGrid / 1000.0f, 2);
     j += ",\"loadToday\":" + String(v.loadKwhToday >= 0 ? v.loadKwhToday : sLoad / 1000.0f, 2);
     j += ",\"todaySrc\":\"" + String(v.pvKwhToday >= 0 ? "inv" : "stats") + "\"";
+    // Счётчики инвертора «всего», кВт·ч — по ним считается статистика.
+    j += ",\"cnt\":{\"pv\":" + String(v.pvKwhTotal, 2) + ",\"grid\":" + String(v.gridKwhTotal, 2) +
+         ",\"load\":" + String(v.loadKwhTotal, 2) + "}";
     j += "},";
 
     j += "\"wifi\":{\"ip\":\"" + jsonEsc(netIp()) + "\",\"status\":\"" + jsonEsc(netStatus()) +

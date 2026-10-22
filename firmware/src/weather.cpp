@@ -208,6 +208,7 @@ static void kSave() {
     if (!p.begin("wx", false)) return;
     p.putBytes("k", s_k, sizeof(float) * s_kn);
     p.putInt("kday", s_kDay);
+    p.putUChar("kv", 2);
     p.end();
 }
 
@@ -335,6 +336,9 @@ void weatherStart() {
         if (n) p.getBytes("k", s_k, n * sizeof(float));
         s_kn = n;
         s_kDay = p.getInt("kday", -1);
+        // До 22.10.2026 факт дня брался из суточного счётчика инвертора, а он
+        // занижал солнце в ~6 раз — выученное тогда выбрасываем один раз.
+        if (p.getUChar("kv", 1) < 2) s_kn = 0;
         s_active = p.getBool("act", false);
         s_decided = p.getInt("dec", -1);
         p.end();

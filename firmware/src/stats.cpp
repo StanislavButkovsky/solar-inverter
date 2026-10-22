@@ -71,17 +71,14 @@ static bool     s_bound = false;                      // s_day привязан 
 static uint32_t s_lastSample = 0, s_lastFlush = 0;
 static float    s_carry = 0;                          // доли секунды для dataS/outageS
 
-// Последние показания счётчиков инвертора: приращение между ними и идёт в
-// статистику. Скачок больше 5 кВт·ч за секунды — сброс или сбой счётчика,
-// такое не засчитываем.
-static double   s_cPv = 0, s_cGrid = 0, s_cLoad = 0;
-
-static float viaCounter(double now, double& last, float watts, float k) {
-    if (now <= 0) return watts * k;      // счётчика нет — интегрируем мощность
-    float wh = (last > 0 && now >= last && now - last < 5) ? (float)((now - last) * 1000.0) : 0;
-    last = now;
-    return wh;
-}
+// Энергия — интеграл мощности раз в секунду. Счётчики кВт·ч самого
+// инвертора (GPV/GOP/GLINE) для этого не годятся: 22.10.2026 они стояли по
+// 17+ минут и прыгали порцией примерно за час (нагрузка +0,68, сеть +1,65
+// кВт·ч разом), часы в статистике выходили то нулевыми, то двойными, а
+// порция после полуночи уходила в следующий день; их поле «сегодня» и вовсе
+// давало солнце 1,73 кВт·ч при 11,4 по мощности. Интеграл за день с ними
+// сходится: солнце 11,4 против 10,9, сеть и нагрузка за час — с прыжком
+// счётчика. Цена: пока модуль выключен, энергия не считается.
 
 // Отключение засчитывается, только если сети нет дольше OUT_CONFIRM_MS
 // подряд, — и тогда задним числом, с первого показания. 20.10.2026 сбойный
@@ -277,6 +274,7 @@ static void flush() {
     if (!s_fs || !s_bound) return;
     writeDay(s_day);
     writeHour(s_hour);
+
     // Текущее отключение: конец «пока что» — чтобы после пропажи питания
     // в журнале остался хотя бы его нижний предел.
     if (s_inOut) {
@@ -303,6 +301,7 @@ static void bindTime() {
     if (s_hour.hour != h) { memset(&s_hour, 0, sizeof(s_hour)); s_hour.hour = h; }
     mergeDay(s_day, s_pend);
     mergeHour(s_hour, s_pendH);
+
     memset(&s_pend, 0, sizeof(s_pend));
     memset(&s_pendH, 0, sizeof(s_pendH));
     s_bound = true;
@@ -384,9 +383,9 @@ void statsLoop() {
 
         float k = dt / 3600.0f;
         float batt = v.mode == INVM_BATTERY ? v.outW : 0;
-        float grid = viaCounter(v.gridKwhTotal, s_cGrid, v.gridW, k);
-        float load = viaCounter(v.loadKwhTotal, s_cLoad, v.outW,  k);
-        float pv   = viaCounter(v.pvKwhTotal,   s_cPv,   v.pvW,   k);
+        float grid = v.gridW * k;
+        float load = v.outW  * k;
+        float pv   = v.pvW   * k;
         D.gridWh += grid;         H.gridWh += grid;
         D.loadWh += load;         H.loadWh += load;
         D.battWh += batt    * k;  H.battWh += batt    * k;
@@ -439,6 +438,7 @@ void statsStart() {
     ensureFile(F_HOURS, NHOURS * sizeof(HourRec));
     ensureFile(F_OUT,   sizeof(OutHdr) + NOUT * sizeof(OutRec));
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
+    LittleFS.remove("/stats/cnt.bin");            // от сборки 22.10, где счётчики ещё учитывались
 
     // Отключение, оборванное пропажей питания платы, закрываем тем концом,
     // что успели записать: это нижний предел его длительности.
@@ -578,9 +578,9 @@ void statsClear() {
     memset(&s_pend, 0, sizeof(s_pend));
     memset(&s_pendH, 0, sizeof(s_pendH));
     s_inOut = false; s_lossSince = 0; s_outSlot = -1;
-    s_cPv = s_cGrid = s_cLoad = 0;
     if (!s_fs) return;
     LittleFS.remove(F_DAYS); LittleFS.remove(F_HOURS); LittleFS.remove(F_OUT); LittleFS.remove(F_PWR);
+
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
     s_pSlot = 0; s_pN = s_pSocN = 0;
     ensureFile(F_DAYS,  NDAYS  * sizeof(DayRec));
