@@ -152,6 +152,7 @@ static void task(void*) {
 }
 
 void weatherRefresh() { s_refresh = true; }
+bool weatherChargeActive() { return s_active; }
 
 // ------------------------------------------------------------------ прогноз
 

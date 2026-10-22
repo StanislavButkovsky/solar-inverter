@@ -1,6 +1,8 @@
 #include "bootlog.h"
 #include "weather.h"
 #include "inv_codes.h"
+#include "schedule.h"
+#include "battlife.h"
 #include "web.h"
 #include "webui_gz.h"
 #include "icon.h"
@@ -464,6 +466,27 @@ void webStart() {
         }
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // Расписание режимов: чтение и сохранение целиком, под паролем модуля.
+    server.on("/api/sched", HTTP_GET, []() {
+        if (server.hasArg("r") || server.hasArg("save")) {
+            String err;
+            if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+            else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+            else err = schedSave(server.arg("r"));
+            server.send(200, "application/json; charset=utf-8",
+                        err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+            return;
+        }
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", schedJson());
+    });
+
+    // Износ батареи: циклы, глубина разряда, оценка ёмкости.
+    server.on("/api/battery", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", battJson());
     });
 
     // Вся история по дням — таблицей для Excel.

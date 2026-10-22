@@ -8,6 +8,8 @@
 #include "bootlog.h"
 #include "weather.h"
 #include "inv_codes.h"
+#include "schedule.h"
+#include "battlife.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -208,7 +210,7 @@ static String monthText(bool full) {
 
 // Команды бота приходят в его задаче, а файлы статистики читает только
 // loop(): запрос — флагом, текст собирает tgLoop().
-static volatile uint8_t s_reportReq = 0;              // 1 — неделя, 2 — месяц
+static volatile uint8_t s_reportReq = 0;              // 1 — неделя, 2 — месяц, 3 — батарея
 
 String tgReport(uint8_t what) { return what == 1 ? weekText() : what == 2 ? monthText(false) : monthText(true); }
 
@@ -216,7 +218,7 @@ static void reportLoop() {
     uint8_t r = s_reportReq;
     if (!r) return;
     s_reportReq = 0;
-    tgNotify(r == 1 ? weekText() : monthText(false));
+    tgNotify(r == 1 ? weekText() : r == 2 ? monthText(false) : battText());
 }
 
 // Последние отключения — из того же журнала, что на странице.
@@ -245,7 +247,7 @@ static const char* HELP =
     "Команды:\n/status — что сейчас\n/today — итоги дня\n/week — за 7 дней\n/month — с начала месяца\n"
     "/outages — последние отключения сети\n"
     "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
-    "/settings — все настройки инвертора\n"
+    "/settings — все настройки инвертора\n/schedule — расписание режимов\n/battery — износ батареи\n"
     "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
 // ------------------------------------------------------------------ очередь
@@ -504,8 +506,10 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     else if (cmd == "/outages") send(cli, chat, outagesText());
     else if (cmd == "/boots")   send(cli, chat, "🔁 " + bootText());
     else if (cmd == "/settings") send(cli, chat, invSettingsText() + "\nМенять — на странице модуля: «Настройки» → «Инвертор».");
+    else if (cmd == "/schedule") send(cli, chat, schedText());
     else if (cmd == "/week")    s_reportReq = 1;
     else if (cmd == "/month")   s_reportReq = 2;
+    else if (cmd == "/battery") s_reportReq = 3;
     else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
     else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
     else if (cmd == "/yes")     send(cli, chat, setConfirm());
@@ -696,6 +700,8 @@ void tgLoop() {
         if (lt.tm_mday == 1 && lt.tm_hour == 9 && month != csvMonth) {
             csvMonth = month;
             tgNotify(monthText(true));
+            String bm = battMonthText();
+            if (bm.length()) tgNotify(bm);
             s_csvCaption = "📎 Статистика за месяц и всё, что было раньше, — бэкап раз в месяц";
             s_csvReq = true;
         }

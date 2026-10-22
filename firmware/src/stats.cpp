@@ -49,7 +49,7 @@ struct DayRec {
     uint8_t  socMin;                                   // минимум заряда за день + 1; 0 — не было
     uint8_t  _r1;
     float    pvFcWh;                                   // прогноз выработки на этот день; 0 — не было
-    uint8_t  _r[4];
+    float    ahOut;                                    // разряд батареи за день, А·ч (ток BMS)
 };
 static_assert(sizeof(DayRec) == 64, "DayRec");
 
@@ -128,6 +128,12 @@ bool statsSum(uint32_t from, uint32_t to, StatSum& o) {
         dayAt(d, r);
         o.pvWh += r.pvWh; o.gridWh += r.gridWh; o.loadWh += r.loadWh; o.battWh += r.battWh;
         o.pvFcWh += r.pvFcWh; o.outageS += r.outageS; o.dataS += r.dataS; o.outages += r.outages;
+        o.ahOut += r.ahOut;
+        if (r.socMin) {
+            o.socMinSum += r.socMin - 1;
+            o.socDays++;
+            if (r.socMin - 1 <= 20) o.deepDays++;
+        }
     }
     return true;
 }
@@ -223,6 +229,7 @@ static void mergeDay(DayRec& a, const DayRec& b) {
     a.pvWh += b.pvWh; a.chgWh += b.chgWh;
     a.outageS += b.outageS; a.dataS += b.dataS; a.outages += b.outages;
     a.pvFcWh += b.pvFcWh;
+    a.ahOut += b.ahOut;
     if (b.tempMax > a.tempMax) a.tempMax = b.tempMax;
     if (b.socMin && (!a.socMin || b.socMin < a.socMin)) a.socMin = b.socMin;
     if (b.loadMax > a.loadMax) a.loadMax = b.loadMax;
@@ -387,6 +394,7 @@ void statsLoop() {
         D.chgWh  += v.chgW  * k;  H.chgWh  += v.chgW  * k;
 
         if (s_bound) pwrSample(v, b);
+        if (b.fresh && b.current < -0.3f) D.ahOut += -b.current * k;   // А·ч разряда — для износа
         if (b.fresh && b.socKnown) {
             uint8_t s1 = (uint8_t)(b.soc + 0.5f) + 1;
             if (!D.socMin || s1 < D.socMin) D.socMin = s1;
@@ -593,7 +601,7 @@ void statsCsv(void (*emit)(const String&, void*), void* ctx) {
     emit("\xEF\xBB\xBF" "Дата;Солнце, кВт·ч;Прогноз солнца, кВт·ч;Из сети, кВт·ч;Нагрузка, кВт·ч;"
          "От батареи, кВт·ч;В батарею, кВт·ч;Без сети, мин;Отключений;Сеть мин., В;Сеть макс., В;"
          "Батарея мин., В;Батарея макс., В;Заряд мин., %;Температура макс., °C;Нагрузка макс., %;"
-         "Данные были, ч;Экономия, ₽\r\n", ctx);
+         "Данные были, ч;Экономия, ₽;Разряд батареи, А·ч\r\n", ctx);
     if (!s_bound) return;
     uint32_t d0 = s_day.day;
     // Файл целиком — 23 КБ, в PSRAM; без неё — по записи, чуть медленнее.
@@ -623,7 +631,8 @@ void statsCsv(void (*emit)(const String&, void*), void* ctx) {
              ";" + (r.battVmin > 0 ? num(r.battVmin, 1) : String("")) + ";" + (r.battVmax > 0 ? num(r.battVmax, 1) : String("")) +
              ";" + (r.socMin ? String(r.socMin - 1) : String("")) + ";" + (r.tempMax > 0 ? String(r.tempMax) : String("")) +
              ";" + String(r.loadMax) + ";" + num(r.dataS / 3600.0f, 1) +
-             ";" + (price > 0 ? num(r.pvWh / 1000 * price, 0) : String("")) + "\r\n";
+             ";" + (price > 0 ? num(r.pvWh / 1000 * price, 0) : String("")) +
+             ";" + (r.ahOut > 0 ? num(r.ahOut, 1) : String("")) + "\r\n";
         emit(l, ctx);
     }
     free(all);

@@ -239,6 +239,14 @@ body.light #pw_tip { color: #1d2433; }
 /* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+.sc_r { padding: 10px 0; border-bottom: 1px solid #232a36; }
+.sc_r .sc_top { display: flex; gap: 8px; align-items: center; }
+.sc_r .sc_top input[type=time] { flex: 1 1 auto; min-width: 0; }
+.sc_r .sc_top select { flex: 0 0 auto; width: auto; }
+.sc_days { display: flex; gap: 4px; margin-top: 8px; }
+.sc_days button { flex: 1 1 0; padding: 7px 0; font-size: 13px; margin: 0; }
+.sc_days button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+body.light .sc_r { border-color: #e7ebf2; }
 .is_g { margin: 14px 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8a93a5; }
 .is_r { padding: 9px 0; border-bottom: 1px solid #232a36; }
 .is_r .is_h { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
@@ -543,6 +551,26 @@ body.light pre.rep { background: #f2f4f8; }
   </div></div></div>
 
   <div class="row"><div class="col c1"><div class="card">
+    <h2>Износ батареи</h2>
+    <table class="kv">
+      <tr><td>Ёмкость по BMS</td><td id="bw_cap">—</td></tr>
+      <tr><td>Разряжено всего</td><td id="bw_total">—</td></tr>
+      <tr><td>За 30 дней</td><td id="bw_month">—</td></tr>
+      <tr><td>Средний разряд до</td><td id="bw_dod">—</td></tr>
+      <tr><td>Глубоких разрядов за 30 дней</td><td id="bw_deep">—</td></tr>
+      <tr><td>Оценка ёмкости</td><td id="bw_est">—</td></tr>
+    </table>
+    <div id="bw_list" style="margin-top:6px"></div>
+    <div class="sub" style="margin-top:8px">
+      Полный цикл — разряд на всю ёмкость, сложенный из любых частичных: два разряда
+      по половине — один цикл. Глубокий разряд — до 20 % и ниже за день. Оценка ёмкости —
+      по зарядке от 70 % и ниже до полной без разряда посередине: сколько ампер-часов
+      на самом деле вошло. Одна оценка неточна, смысл — в тренде: если от месяца к
+      месяцу она падает, батарея теряет ёмкость.
+    </div>
+  </div></div></div>
+
+  <div class="row"><div class="col c1"><div class="card">
     <h2>Таблица для Excel</h2>
     <div class="sub" style="margin-bottom:10px">
       Вся история по дням, до года: солнце, прогноз, сеть, нагрузка, отключения,
@@ -731,6 +759,24 @@ body.light pre.rep { background: #f2f4f8; }
       <label>Заряжать до, %</label>
       <input id="au_soc" inputmode="numeric">
       <div class="sub" id="au_last" style="margin-top:8px"></div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="auto">
+    <div class="col c1"><div class="card">
+      <h2>Расписание режимов <span id="sc_chip" class="chip gray">—</span></h2>
+      <div class="sub" style="margin-bottom:8px">
+        Каждое правило — одно переключение: в эти дни, в это время поставить режим.
+        Интервал «с 7 до 9 — GRD» — два правила: в 7:00 GRD и в 9:00 обратно PBG.
+        Пока ночная зарядка по прогнозу держит CHP, правила для CHP пропускаются.
+        О каждом срабатывании пишет бот.
+      </div>
+      <div id="sc_list"></div>
+      <div style="margin-top:10px"><button onclick="scAdd()">Добавить правило</button></div>
+      <label>Пароль модуля</label>
+      <input id="sc_pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="scSave()">Сохранить расписание</button></div>
+      <div class="sub" id="sc_msg" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -968,6 +1014,7 @@ function setTab(t) {
   for (var j = 0; j < TABS.length; j++) $("tb_" + TABS[j]).classList.toggle("on", TABS[j] === t);
   if (onSettings && history.replaceState) history.replaceState(null, "", "#settings/" + t);
   if (t === "inv") setTimeout(function () { isLoad(true); }, 0);
+  if (t === "auto") setTimeout(scLoad, 0);
   window.scrollTo(0, 0);
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
@@ -1435,6 +1482,58 @@ function tgSave() {
   tgLowSet = false;
 }
 
+/* ----------------------------------------- расписание режимов */
+var scRules = null, scDirty = false;
+var SC_MODES = [["0.0", "OPP → GRD (сеть)"], ["0.1", "OPP → PU (солнце)"], ["0.2", "OPP → PBG (солнце → батарея → сеть)"],
+                ["1.0", "CHP → PV"], ["1.1", "CHP → PNG (солнце и сеть)"], ["1.2", "CHP → OPV (только солнце)"]];
+var SC_DAY = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+function scLoad() {
+  if (scDirty) return;
+  get("/api/sched", function (d) { scRules = d.rules || []; scRender(); });
+}
+function scRender() {
+  if (!scRules) return;
+  var on = 0;
+  for (var k = 0; k < scRules.length; k++) if (scRules[k].on) on++;
+  chip("sc_chip", on ? "green" : "gray", on ? "правил: " + on : "нет");
+  var h = "";
+  for (var i = 0; i < scRules.length; i++) {
+    var r = scRules[i], t = two(r.h) + ":" + two(r.m), m = r.w + "." + r.c;
+    h += '<div class="sc_r"><div class="sc_top">' +
+         '<select onchange="scSet(' + i + ',\'on\',+this.value)"><option value="1"' + (r.on ? " selected" : "") + '>вкл.</option>' +
+         '<option value="0"' + (r.on ? "" : " selected") + '>выкл.</option></select>' +
+         '<input type="time" value="' + t + '" onchange="scTime(' + i + ',this.value)">' +
+         '<button onclick="scDel(' + i + ')" title="Удалить">✕</button></div>' +
+         '<select style="margin-top:8px" onchange="scMode(' + i + ',this.value)">';
+    for (var j = 0; j < SC_MODES.length; j++)
+      h += '<option value="' + SC_MODES[j][0] + '"' + (SC_MODES[j][0] === m ? " selected" : "") + '>' + SC_MODES[j][1] + '</option>';
+    h += '</select><div class="sc_days">';
+    for (var d = 0; d < 7; d++)
+      h += '<button class="' + ((r.d >> d) & 1 ? "on" : "") + '" onclick="scDay(' + i + ',' + d + ')">' + SC_DAY[d] + '</button>';
+    h += '</div></div>';
+  }
+  $("sc_list").innerHTML = h || '<div class="sub">правил пока нет</div>';
+}
+function scTouch() { scDirty = true; scRender(); $("sc_msg").innerHTML = "есть несохранённые изменения"; }
+function scSet(i, k, v) { scRules[i][k] = v; scTouch(); }
+function scTime(i, v) { var p = v.split(":"); scRules[i].h = +p[0] || 0; scRules[i].m = +p[1] || 0; scTouch(); }
+function scMode(i, v) { var p = v.split("."); scRules[i].w = +p[0]; scRules[i].c = +p[1]; scTouch(); }
+function scDay(i, d) { var n = scRules[i].d ^ (1 << d); if (n) scRules[i].d = n; scTouch(); }
+function scDel(i) { scRules.splice(i, 1); scTouch(); }
+function scAdd() {
+  if (!scRules) scRules = [];
+  if (scRules.length >= 8) { $("sc_msg").innerHTML = "не больше 8 правил"; return; }
+  scRules.push({ on: 1, d: 31, h: 7, m: 0, w: 0, c: 0 });
+  scTouch();
+}
+function scSave() {
+  var r = scRules.map(function (x) { return [x.on, x.d, x.h, x.m, x.w, x.c].join("."); }).join(";");
+  get("/api/sched?save=1&r=" + encodeURIComponent(r) + "&pass=" + encodeURIComponent($("sc_pass").value), function (res) {
+    if (res.ok) { scDirty = false; $("sc_msg").innerHTML = "сохранено"; scLoad(); }
+    else $("sc_msg").innerHTML = "не сохранено: " + (res.error || "?");
+  }, function () { $("sc_msg").innerHTML = "модуль не ответил"; });
+}
+
 /* ----------------------------------------- все настройки инвертора */
 var isData = null, isOpen = "", isWait = -1, isLoadAt = 0;
 function isLoad(force) {
@@ -1837,7 +1936,34 @@ function metricText(v) { return stM === "o" ? dur(v) : ("≈ " + kwh(v) + " кВ
 function stRange(r) { stR = r; stSel = -1; stLoad(); }
 function stMetric(m) { stM = m; stSel = -1; stDraw(); }
 
+function bwLoad() {
+  get("/api/battery", function (b) {
+    var n = function (v, d) { return String(Number(v).toFixed(d)).replace(".", ","); };
+    $("bw_cap").innerHTML = b.cap ? n(b.cap, 0) + " А·ч" : "BMS не сообщила";
+    var since = b.since ? new Date(b.since * 1000) : null;
+    $("bw_total").innerHTML = n(b.ahOut, 0) + " А·ч" + (b.cap ? " ≈ " + n(b.cycles, 1) + " полных циклов" : "") +
+      (since ? ' <span class="sub">с ' + two(since.getDate()) + "." + two(since.getMonth() + 1) + "." + since.getFullYear() + "</span>" : "");
+    if (b.m) {
+      $("bw_month").innerHTML = (b.cap ? n(b.m.cycles, 1) + " цикла, " : "") + n(b.m.ah, 0) + " А·ч" +
+        (b.m.dataDays < 29.5 ? ' <span class="sub">(данные за ' + n(b.m.dataDays, 1) + " сут)</span>" : "");
+      $("bw_dod").innerHTML = b.m.socDays ? n(b.m.socMinAvg, 0) + " %" : "—";
+      $("bw_deep").innerHTML = b.m.socDays ? String(b.m.deep) : "—";
+    }
+    $("bw_est").innerHTML = b.est.length ? n(b.estMed, 0) + " А·ч" + (b.cap ? " — " + n(b.estMed / b.cap * 100, 0) + " % от BMS" : "") +
+      ' <span class="sub">(измерений ' + b.est.length + ")</span>"
+      : (b.seg ? "идёт измерение: зарядка от " + b.segS0 + " %" : "пока нет — нужна зарядка от 70 % и ниже до полной");
+    var h = "";
+    for (var i = 0; i < b.est.length; i++) {
+      var e = b.est[i], d = new Date(e.t * 1000);
+      h += '<div class="ev"><span class="tm">' + two(d.getDate()) + "." + two(d.getMonth() + 1) + "</span>" +
+           n(e.cap, 0) + ' А·ч <span class="sub">· зарядка от ' + e.s0 + " %</span></div>";
+    }
+    $("bw_list").innerHTML = h;
+  });
+}
+
 function stLoad() {
+  bwLoad();
   var ids = ["day", "week", "month", "year"];
   for (var i = 0; i < ids.length; i++) $("sr_" + ids[i]).className = ids[i] === stR ? "on" : "";
   get("/api/stats?range=" + stR, function (s) { stData = s; stShow(); });

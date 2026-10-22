@@ -34,7 +34,11 @@ void   statsSetPvForecast(float wh);
 
 // Суммы за дни fromDay..toDay включительно (местные сутки от 1970) — для
 // сводок за неделю и месяц. Только из loop(): читает файл дней.
-struct StatSum { float pvWh, gridWh, loadWh, battWh, pvFcWh; uint32_t outageS, dataS; uint16_t outages; };
+struct StatSum {
+    float pvWh, gridWh, loadWh, battWh, pvFcWh, ahOut;
+    uint32_t outageS, dataS, socMinSum;   // socMinSum — сумма дневных минимумов заряда, %
+    uint16_t outages, socDays, deepDays;  // дней, когда заряд знали; из них разряжались до 20 % и ниже
+};
 bool     statsSum(uint32_t fromDay, uint32_t toDay, StatSum& out);   // false — времени нет
 uint32_t statsDay();                      // сегодня, местные сутки от 1970; 0 — времени нет      // прогноз выработки на сегодня — из weather.cpp
 // Вся история по дням CSV-таблицей, по частям: для выгрузки и бэкапа в бот.

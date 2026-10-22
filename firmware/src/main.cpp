@@ -24,6 +24,8 @@
 #include "tg.h"
 #include "bootlog.h"
 #include "weather.h"
+#include "schedule.h"
+#include "battlife.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -82,6 +84,8 @@ void setup() {
     statsStart();
     evStart();                // журнал событий — во флеш, после монтирования LittleFS
     weatherStart();           // до бота: у них общий замок TLS
+    schedStart();
+    battStart();
     tgStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
@@ -106,5 +110,7 @@ void loop() {
     tgLoop();
     bootLoop();
     weatherLoop();
+    schedLoop();
+    battLoop();
     delay(2);
 }
