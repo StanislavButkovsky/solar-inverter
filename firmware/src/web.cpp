@@ -3,6 +3,7 @@
 #include "inv_codes.h"
 #include "schedule.h"
 #include "battlife.h"
+#include "pace.h"
 #include "web.h"
 #include "webui_gz.h"
 #include "icon.h"
@@ -486,6 +487,12 @@ void webStart() {
         }
         server.sendHeader("Cache-Control", "no-store");
         server.send(200, "application/json; charset=utf-8", schedJson());
+    });
+
+    // BMS батарей напрямую по RS485: ячейки, температуры, защиты, сырые ответы.
+    server.on("/api/pace", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", paceJson());
     });
 
     // Износ батареи: циклы, глубина разряда, оценка ёмкости.

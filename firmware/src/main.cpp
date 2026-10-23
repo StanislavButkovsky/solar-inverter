@@ -26,6 +26,7 @@
 #include "weather.h"
 #include "schedule.h"
 #include "battlife.h"
+#include "pace.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
 #endif
@@ -86,6 +87,7 @@ void setup() {
     weatherStart();           // до бота: у них общий замок TLS
     schedStart();
     battStart();
+    paceStart();              // BMS батарей по RS485 (HS35), если подключена
     tgStart();
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,

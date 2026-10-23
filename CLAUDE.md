@@ -12,6 +12,7 @@
 ```
 firmware/src/   main · cfg (NVS) · net · web (HTTP API) · stats (LittleFS) · tg (бот)
                 weather (прогноз, ночная зарядка) · bootlog · ota · rtc (DS3231) · cli
+                schedule (расписание режимов) · battlife (износ) · pace (BMS по RS485)
                 inv.cpp + profile_*.cpp (что спрашивать) + inv_usb/inv_ble (провод)
                 profile_hs35.cpp — G-ASCII HS35, запись режимов
 firmware/web/index.html   страница; scripts/gen_web.py жмёт её в webui_gz.h при сборке

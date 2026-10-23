@@ -10,6 +10,7 @@
 #include "inv_codes.h"
 #include "schedule.h"
 #include "battlife.h"
+#include "pace.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -247,7 +248,7 @@ static const char* HELP =
     "Команды:\n/status — что сейчас\n/today — итоги дня\n/week — за 7 дней\n/month — с начала месяца\n"
     "/outages — последние отключения сети\n"
     "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
-    "/settings — все настройки инвертора\n/schedule — расписание режимов\n/battery — износ батареи\n"
+    "/settings — все настройки инвертора\n/schedule — расписание режимов\n/battery — износ батареи\n/cells — ячейки батарей\n"
     "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
 // ------------------------------------------------------------------ очередь
@@ -510,6 +511,7 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     else if (cmd == "/week")    s_reportReq = 1;
     else if (cmd == "/month")   s_reportReq = 2;
     else if (cmd == "/battery") s_reportReq = 3;
+    else if (cmd == "/cells")   send(cli, chat, paceText());
     else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
     else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
     else if (cmd == "/yes")     send(cli, chat, setConfirm());
@@ -607,6 +609,21 @@ static const float   GRID_LO = 190, GRID_HI = 250, GRID_OK_LO = 200, GRID_OK_HI 
 static void alarmsLoop(const InvState& v, const BmsState& b) {
     static Alarm hot, load, volt, pv;
     if (!v.fresh || millis() < 120000) return;
+    // Защиты и неисправности BMS батарей (pace.cpp) — при смене.
+    static String pAlarm;
+    String al = paceAlarm();
+    if (al != pAlarm) {
+        if (al.length()) tgNotify("❗ BMS батарей: " + al);
+        else if (pAlarm.length()) tgNotify("✅ Защиты BMS батарей сняты");
+        pAlarm = al;
+    }
+    // Разброс ячеек больше 100 мВ дольше 10 минут — какая-то ячейка отстаёт.
+    static Alarm spread;
+    uint16_t sp = b.cellCount > 1 ? b.spreadMv() : 0;
+    alarmStep(spread, b.cellCount > 1 && sp > 100, sp < 60, 600,
+              "⚠️ Разброс ячеек " + String(sp) + " мВ (ячейки " + String(b.cellMinNo) + " и " + String(b.cellMaxNo) +
+              ") — какая-то отстаёт. /cells — подробно.",
+              "✅ Разброс ячеек снова в норме: " + String(sp) + " мВ");
     // Коды аварии и предупреждения самой BMS (HS35 передаёт их в GBMS).
     static uint16_t pF = 0, pW = 0;
     if (b.fresh && (b.bmsFault != pF || b.bmsWarn != pW)) {

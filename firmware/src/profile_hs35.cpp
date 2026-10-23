@@ -734,7 +734,9 @@ static void applyGbms(const char* f[], const char* line) {
         b.voltage = inum(f[2]) / 10.0f;
         b.current = amps;                 // минус — разряд
         b.chargeState = amps > 0.5f ? 1 : (amps < -0.5f ? 2 : 0);
-        b.tempMax = b.tempMin = (int16_t)(inum(f[4]) / 10);
+        // Если ячейки читаются напрямую (pace.cpp), температуры — оттуда: там
+        // их по четыре на батарею, здесь одна общая.
+        if (!b.cellCount) b.tempMax = b.tempMin = (int16_t)(inum(f[4]) / 10);
         long lim = inum(f[10]), cv = inum(f[11]);
         b.chgLimitA = (lim >= 0 && lim < 32767) ? lim / 100.0f : -1;
         b.cvV       = (cv > 0 && cv < 32767) ? cv / 10.0f : -1;
