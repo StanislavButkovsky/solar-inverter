@@ -946,6 +946,26 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
+      <h2>Резервная копия</h2>
+      <div class="sub" style="margin-bottom:10px">
+        Все настройки модуля одним файлом: Wi-Fi, бот, «Авто», расписание, отметки
+        «сверено с панелью», выученный прогноз, износ батареи, найденная BMS. Нужна,
+        если плата сломается или её сбросят кнопкой. Пароля модуля в файле нет;
+        пароль Wi-Fi и токен бота — есть, поэтому файл не пересылать. Раз в месяц
+        бот присылает его сам (и по команде /backup).
+      </div>
+      <label>Пароль модуля</label>
+      <input id="bk_pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide" onclick="bkSave()">Скачать копию</button></div>
+      <label style="margin-top:14px">Восстановить из файла</label>
+      <input id="bk_file" type="file" accept=".json,application/json">
+      <div style="margin-top:12px"><button class="wide accent" onclick="bkRestore()">Восстановить и перезагрузить</button></div>
+      <div class="sub" id="bk_msg" style="margin-top:8px"></div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="sys">
+    <div class="col c1"><div class="card">
       <h2>Перезагрузки <span id="bt_chip" class="chip gray">—</span></h2>
       <div class="sub" id="bt_now" style="margin-bottom:8px">—</div>
       <div id="bt_list"></div>
@@ -1905,6 +1925,48 @@ function autoSave() {
     $("au_msg").innerHTML = r.ok ? "сохранено" : (r.error || "не вышло");
     if (r.ok) auFilled = false;
   }, function () { $("au_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
+}
+
+/* ----------------------------------------- резервная копия */
+function bkSave() {
+  var r = new XMLHttpRequest();
+  r.open("GET", "/api/backup?mpass=" + encodeURIComponent($("bk_pass").value), true);
+  r.timeout = 10000;
+  r.onload = function () {
+    var t = r.responseText;
+    if (t.indexOf('"ok":false') >= 0) { try { $("bk_msg").innerHTML = JSON.parse(t).error; } catch (e) { } return; }
+    var m = /filename="([^"]+)"/.exec(r.getResponseHeader("Content-Disposition") || "");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([t], { type: "application/json" }));
+    a.download = m ? m[1] : "solar-backup.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    $("bk_msg").innerHTML = "копия скачана";
+  };
+  r.onerror = r.ontimeout = function () { $("bk_msg").innerHTML = "модуль не ответил"; };
+  r.send();
+}
+function bkRestore() {
+  var f = $("bk_file").files[0];
+  if (!f) { $("bk_msg").innerHTML = "выберите файл копии"; return; }
+  if (!confirm("Восстановить настройки из «" + f.name + "»? Текущие будут заменены, модуль перезагрузится.")) return;
+  var rd = new FileReader();
+  rd.onload = function () {
+    var r = new XMLHttpRequest();
+    r.open("POST", "/api/restore", true);
+    r.setRequestHeader("X-Pass", encodeURIComponent($("bk_pass").value));
+    r.setRequestHeader("Content-Type", "text/plain");
+    r.timeout = 15000;
+    r.onload = function () {
+      try {
+        var j = JSON.parse(r.responseText);
+        $("bk_msg").innerHTML = j.ok ? "восстановлено — модуль перезагружается, через полминуты обновите страницу" : ("не восстановлено: " + j.error);
+      } catch (e) { $("bk_msg").innerHTML = "модуль ответил непонятно"; }
+    };
+    // Успех и перезагрузка могут прийти раньше ответа — молчание не считаем ошибкой.
+    r.onerror = r.ontimeout = function () { $("bk_msg").innerHTML = "ответ не дошёл — если модуль перезагрузился, всё в порядке"; };
+    r.send(rd.result);
+  };
+  rd.readAsText(f);
 }
 
 /* ----------------------------------------- перезагрузки */

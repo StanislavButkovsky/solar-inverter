@@ -4,6 +4,7 @@
 #include "schedule.h"
 #include "battlife.h"
 #include "pace.h"
+#include "backup.h"
 #include "web.h"
 #include "webui_gz.h"
 #include "icon.h"
@@ -511,6 +512,30 @@ void webStart() {
     server.on("/api/pace", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
         server.send(200, "application/json; charset=utf-8", paceJson());
+    });
+
+    // Резервная копия: скачать (GET) и восстановить (POST, тело — сама копия,
+    // пароль — в заголовке X-Pass: у POST с сырым телом WebServer не разбирает
+    // параметры адреса). Без заданного пароля — открыто: это новая плата.
+    server.on("/api/backup", HTTP_GET, []() {
+        if (denied()) return;
+        server.sendHeader("Content-Disposition", "attachment; filename=\"" + backupName() + "\"");
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json; charset=utf-8", backupJson());
+    });
+    server.on("/api/restore", HTTP_POST, [otaPass]() {
+        if (otaPasswordSet() && otaPass() != cfg().webPass) {          // X-Pass закодирован, как в адресе
+            server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"нужен пароль модуля\"}");
+            return;
+        }
+        String err = backupRestore(server.arg("plain"));
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+        if (err.isEmpty()) {
+            bootMark("копия настроек");
+            delay(500);
+            ESP.restart();
+        }
     });
 
     // Износ батареи: циклы, глубина разряда, оценка ёмкости.

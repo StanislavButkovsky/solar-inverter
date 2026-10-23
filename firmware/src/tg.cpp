@@ -11,6 +11,7 @@
 #include "schedule.h"
 #include "battlife.h"
 #include "pace.h"
+#include "backup.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -248,7 +249,7 @@ static const char* HELP =
     "Команды:\n/status — что сейчас\n/today — итоги дня\n/week — за 7 дней\n/month — с начала месяца\n"
     "/outages — последние отключения сети\n"
     "/opp — приоритет работы (посмотреть, переключить)\n/chp — приоритет зарядки\n"
-    "/settings — все настройки инвертора\n/schedule — расписание режимов\n/battery — износ батареи\n/cells — ячейки батарей\n"
+    "/settings — все настройки инвертора\n/schedule — расписание режимов\n/battery — износ батареи\n/cells — ячейки батарей\n/backup — резервная копия настроек\n"
     "/forecast — прогноз солнца и ночная зарядка\n/csv — вся статистика таблицей\n/boots — перезапуски модуля\n/help — этот список";
 
 // ------------------------------------------------------------------ очередь
@@ -310,34 +311,48 @@ static void send(WiFiClientSecure& cli, const String& chat, const String& text) 
 // Таблица статистики файлом. Собирает её loop() — там живёт статистика и её
 // файлы, — а отправляет задача бота: s_csvReq → loop() → s_csv → задача.
 // Строка на 20–30 КБ уходит в PSRAM.
-static volatile bool s_csvReq = false;
+static volatile bool s_csvReq = false, s_bakReq = false;
 static String* volatile s_csv = nullptr;
-static String s_csvCaption;
+static String s_csvCaption, s_docName, s_docType;
 
+// Файл в чат: таблица статистики или резервная копия настроек. Собирает
+// loop(), отправляет задача бота; по одному за раз.
 static void csvBuild() {
-    if (!s_csvReq || s_csv) return;
-    s_csvReq = false;
+    if (s_csv || (!s_csvReq && !s_bakReq)) return;
     String* c = new String();
-    c->reserve(32768);
-    statsCsv([](const String& part, void* ctx) { *(String*)ctx += part; }, c);
+    if (s_csvReq) {
+        s_csvReq = false;
+        c->reserve(32768);
+        statsCsv([](const String& part, void* ctx) { *(String*)ctx += part; }, c);
+        time_t loc = time(nullptr) + 3 * 3600;
+        struct tm lt;
+        gmtime_r(&loc, &lt);
+        char name[40];
+        snprintf(name, sizeof(name), "solar-%04d-%02d-%02d.csv", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+        s_docName = name;
+        s_docType = "text/csv";
+    } else {
+        s_bakReq = false;
+        *c = backupJson();
+        s_docName = backupName();
+        s_docType = "application/json";
+        s_csvCaption = "🗄 Резервная копия настроек модуля. Восстановить: «Настройки» → «Модуль» → "
+                       "«Резервная копия». В файле пароль Wi-Fi и токен бота — не пересылайте его.";
+    }
     s_csv = c;
 }
 
 static void sendCsv(WiFiClientSecure& cli, const String& chat) {
     String* csv = s_csv;
     if (!csv) return;
-    time_t loc = time(nullptr) + 3 * 3600;
-    struct tm lt;
-    gmtime_r(&loc, &lt);
-    char name[40];
-    snprintf(name, sizeof(name), "solar-%04d-%02d-%02d.csv", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+    String name = s_docName;
     String bnd = "----solar" + String(esp_random(), HEX);
     String body;
     body.reserve(csv->length() + 600);
     body = "--" + bnd + "\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n" + chat + "\r\n";
     body += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n" + s_csvCaption + "\r\n";
     body += "--" + bnd + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"" + name +
-            "\"\r\nContent-Type: text/csv\r\n\r\n";
+            "\"\r\nContent-Type: " + s_docType + "\r\n\r\n";
     body += *csv;
     body += "\r\n--" + bnd + "--\r\n";
     s_csv = nullptr;
@@ -512,6 +527,7 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
     else if (cmd == "/month")   s_reportReq = 2;
     else if (cmd == "/battery") s_reportReq = 3;
     else if (cmd == "/cells")   send(cli, chat, paceText());
+    else if (cmd == "/backup") { s_bakReq = true; send(cli, chat, "Собираю резервную копию, сейчас пришлю."); }
     else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
     else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
     else if (cmd == "/yes")     send(cli, chat, setConfirm());
@@ -729,6 +745,7 @@ void tgLoop() {
             if (bm.length()) tgNotify(bm);
             s_csvCaption = "📎 Статистика за месяц и всё, что было раньше, — бэкап раз в месяц";
             s_csvReq = true;
+            s_bakReq = true;                              // следом — копия настроек
         }
     }
 }
