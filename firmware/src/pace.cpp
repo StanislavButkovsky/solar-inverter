@@ -83,11 +83,12 @@ bool paceAsciiCheck(const char* f, size_t n) {
 // У SEPLOS (вариант 0x20) за объявленными температурами идут ещё две —
 // среды и ключей; если с объявленным числом сумма ячеек не сходится с
 // напряжением, пробуем «+2».
-static bool analogTry(const char* f, size_t n, PacePack& p, uint8_t extraTemps) {
+static bool analogTry(const char* f, size_t n, PacePack& p, uint8_t extraTemps, uint8_t lead = 2) {
     size_t end = n - 5, off = 13;
-    uint8_t b0, b1, cells, temps, ud;
+    uint8_t b0, cells, temps, ud;
     uint16_t w;
-    if (!hb(f, end, off, b0) || !hb(f, end, off, b1) || !hb(f, end, off, cells)) return false;
+    for (uint8_t i = 0; i < lead; i++) if (!hb(f, end, off, b0)) return false;
+    if (!hb(f, end, off, cells)) return false;
     if (cells == 0 || cells > 16) return false;
     uint16_t mv[16];
     uint32_t sum = 0;
@@ -132,7 +133,9 @@ static bool analogTry(const char* f, size_t n, PacePack& p, uint8_t extraTemps) 
 
 bool paceAsciiAnalog(const char* f, size_t n, PacePack& p) {
     if (!paceAsciiCheck(f, n)) return false;
-    return analogTry(f, n, p, 0) || analogTry(f, n, p, 2);
+    // Порядок: PACE и Pylontech (два служебных байта — флаг и адрес),
+    // SEPLOS (+2 температуры), прошивки Pylontech с одним байтом-флагом.
+    return analogTry(f, n, p, 0) || analogTry(f, n, p, 2) || analogTry(f, n, p, 0, 1);
 }
 
 bool paceAsciiStatus(const char* f, size_t n, PacePack& p) {
@@ -155,6 +158,54 @@ bool paceAsciiStatus(const char* f, size_t n, PacePack& p) {
     p.balance = bal;
     p.chgMos = sys & (1 << 1);
     p.dsgMos = sys & (1 << 2);
+    p.stOk = true;
+    return true;
+}
+
+// Состояние по Pylontech (CID2 0x44, протокол 0x20). Так отвечает порт RS485
+// BMS PACE, когда на её экране для RS485 выбран протокол PYLON (у батарей
+// владельца — так, 23.10.2026). Разметка — по спецификации Pylontech RS485:
+// флаг, адрес, по байту на ячейку (1 ниже, 2 выше), на температуру, токи и
+// напряжение, затем Status1 (0 батарея выше, 1 ячейка ниже, 2 ток заряда,
+// 4 ток разряда, 5 перегрев разряда, 6 перегрев заряда, 7 батарея ниже) и
+// Status2 (1 ключ заряда, 2 ключ разряда). Балансировки в протоколе нет.
+// На живом кадре не проверено — первый кадр сохраняется сырым.
+bool paceAsciiStatusPylon(const char* f, size_t n, PacePack& p) {
+    if (!paceAsciiCheck(f, n)) return false;
+    size_t end = n - 5, off = 13;
+    uint8_t b0, b1, cells, temps, x, ci, mv, di, s1, s2;
+    if (!hb(f, end, off, b0) || !hb(f, end, off, b1) || !hb(f, end, off, cells) || cells == 0 || cells > 16) return false;
+    uint16_t warn = 0;
+    for (uint8_t i = 0; i < cells; i++) {
+        if (!hb(f, end, off, x)) return false;
+        if (x == 1) warn |= 1 << 1;
+        if (x == 2) warn |= 1 << 0;
+    }
+    if (!hb(f, end, off, temps) || temps > 8) return false;
+    for (uint8_t i = 0; i < temps; i++) {
+        if (!hb(f, end, off, x)) return false;
+        if (x == 2) warn |= 1 << 8;
+        if (x == 1) warn |= 1 << 10;
+    }
+    if (!hb(f, end, off, ci) || !hb(f, end, off, mv) || !hb(f, end, off, di) || !hb(f, end, off, s1) || !hb(f, end, off, s2)) return false;
+    if (ci == 2) warn |= 1 << 4;
+    if (mv == 2) warn |= 1 << 2;
+    if (mv == 1) warn |= 1 << 3;
+    if (di == 2) warn |= 1 << 5;
+    uint16_t prot = 0;
+    if (s1 & 0x01) prot |= 1 << 2;
+    if (s1 & 0x02) prot |= 1 << 1;
+    if (s1 & 0x04) prot |= 1 << 4;
+    if (s1 & 0x10) prot |= 1 << 5;
+    if (s1 & 0x20) prot |= 1 << 9;
+    if (s1 & 0x40) prot |= 1 << 8;
+    if (s1 & 0x80) prot |= 1 << 3;
+    p.warn = warn;
+    p.prot = prot;
+    p.fault = 0;
+    p.balance = 0;
+    p.chgMos = s2 & 0x02;
+    p.dsgMos = s2 & 0x04;
     p.stOk = true;
     return true;
 }
@@ -223,7 +274,7 @@ static const uint8_t  NPACK = 4;
 static const uint32_t POLL_MS = 5000;
 
 enum Proto : uint8_t { P_NONE, P_V25, P_MODBUS, P_V20 };
-static const char* const PROTO_NAME[] = { "—", "PACE ASCII 0x25", "PACE Modbus RTU", "PACE ASCII 0x20" };
+static const char* const PROTO_NAME[] = { "—", "PACE ASCII 0x25", "PACE Modbus RTU", "Pylontech RS485 (0x20)" };
 
 static HardwareSerial s_ser(1);
 static SemaphoreHandle_t s_mx;
@@ -306,7 +357,13 @@ static bool pollPack(uint8_t proto, uint8_t addr, PacePack& p, bool probe) {
         if (!paceAsciiAnalog(abuf, n, q)) { if (probe) rememberRaw(String(abuf).substring(0, 200)); return false; }
         vTaskDelay(pdMS_TO_TICKS(120));                      // пауза между кадрами — от 100 мс
         n = asciiXfer(ver, addr, 0x44, abuf, sizeof(abuf));
-        if (n && !paceAsciiStatus(abuf, n, q) && probe) rememberRaw(String(abuf).substring(0, 200));
+        if (n) {
+            // У PACE 0x25 и у Pylontech (0x20) состояние разное по разметке.
+            bool ok = proto == P_V25 ? paceAsciiStatus(abuf, n, q) : paceAsciiStatusPylon(abuf, n, q);
+            static bool keptPylon = false;
+            if (proto == P_V20 && !keptPylon) { keptPylon = true; rememberRaw("состояние 0x44 (Pylontech, для сверки): " + String(abuf).substring(0, 200)); }
+            if (!ok && probe) rememberRaw(String(abuf).substring(0, 200));
+        }
     }
     q.addr = addr;
     xSemaphoreTake(s_mx, portMAX_DELAY);
@@ -325,7 +382,8 @@ static void save() {
 
 // Поиск: протоколы по очереди, адреса 0–15; нашёлся — остальные адреса тем же.
 static void probe() {
-    static const uint8_t ORDER[] = { P_V25, P_MODBUS, P_V20 };
+    // Pylontech первым: у батарей владельца на экране для RS485 выбран PYLON.
+    static const uint8_t ORDER[] = { P_V20, P_V25, P_MODBUS };
     for (uint8_t pi = 0; pi < sizeof(ORDER); pi++) {
         uint8_t pr = ORDER[pi];
         for (uint8_t a = 0; a < 16; a++) {

@@ -2,8 +2,11 @@
 //
 // У HS35 батарея говорит с инвертором по CAN, и через инвертор (GBMS) идёт
 // только общее: напряжение, ток, заряд. Ячеек там нет. Батареи владельца —
-// две ENSSE ENS-Li48V100 (48 В, 100 А·ч), панель как у BMS PACE: свободный
-// порт RS485 рядом с CAN. Модуль RS485↔TTL на 3,3 В с автоматическим
+// две ENSSE ENS-Li48V100 (48 В, 100 А·ч), BMS PACE `A15S120A-A106-2.00`
+// (15 ячеек LiFePO4, 120 А), адреса 1 (L1) и 2 (L2), свободный порт RS485
+// рядом с CAN. На экране батарей для CAN и для RS485 выбран протокол PYLON —
+// поэтому первым пробуется Pylontech. Родной протокол PACE 0x25 — на порту
+// RS232 (нужен модуль MAX3232), если Pylontech окажется беден. Модуль RS485↔TTL на 3,3 В с автоматическим
 // направлением: RO → GPIO 18, DI ← GPIO 17. RJ45 (по esphome-pace-bms):
 // 1 B−, 2 A+, 3 GND.
 //
@@ -50,6 +53,7 @@ size_t paceAsciiRequest(char* out, size_t cap, uint8_t ver, uint8_t addr, uint8_
 bool   paceAsciiCheck(const char* frame, size_t n);                 // SOI, EOI, длина, сумма
 bool   paceAsciiAnalog(const char* frame, size_t n, PacePack& p);   // ответ на 0x42
 bool   paceAsciiStatus(const char* frame, size_t n, PacePack& p);   // ответ на 0x44
+bool   paceAsciiStatusPylon(const char* frame, size_t n, PacePack& p);  // 0x44 по Pylontech (0x20)
 // Modbus RTU.
 size_t paceModbusRequest(uint8_t* out, uint8_t addr, uint16_t reg, uint16_t count);
 bool   paceModbusParse(const uint8_t* rx, size_t n, uint8_t addr, PacePack& p);

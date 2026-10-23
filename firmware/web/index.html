@@ -1331,8 +1331,18 @@ function render(s) {
   $("cellinfo").innerHTML = b.cellCount
       ? ("· мин " + b.minMv + " · макс " + b.maxMv + " мВ · разброс " + b.spread + " мВ") : "";
   // Две батареи — ячейки подряд: 1–16 первая, 17–32 вторая.
-  $("cellpacks").innerHTML = b.cellCount > 16
-      ? "батарея 1 — ячейки 1–16, батарея 2 — 17–" + b.cellCount : "";
+  // Ячеек в батарее может быть 15 (как у ENSSE) или 16 — границы из ответа BMS.
+  var cp = [];
+  if (paceData && paceData.packs.length > 1) {
+    var from = 1;
+    for (var k = 0; k < paceData.packs.length; k++) {
+      var nc = paceData.packs[k].cells.length;
+      if (!paceData.packs[k].ok || !nc) continue;
+      cp.push("батарея " + (k + 1) + " — ячейки " + from + "–" + (from + nc - 1));
+      from += nc;
+    }
+  }
+  $("cellpacks").innerHTML = cp.length > 1 ? cp.join(", ") : "";
   // Шкала под химию: LiFePO4 2,8…3,65 В, NMC 3,0…4,2 В.
   var lfp = b.maxMv > 0 && b.maxMv < 3750;
   for (var i = 0; i < cellNodes.length; i++) {
