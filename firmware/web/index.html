@@ -39,6 +39,18 @@ a { color: #4c9aff; text-decoration: none; }
 .chip.amber { background: #3d2f12; color: #f0a83c; }
 .chip.red   { background: #3d1c17; color: #ff6d55; }
 .chip.blue  { background: #14294a; color: #6cb0ff; }
+/* Из чего складывается нагрузка: отрезки по долям, цвета — как у графика за сутки. */
+.mx { margin: -2px 0 8px; }
+.mx_bar { display: flex; gap: 2px; height: 14px; }
+.mx_bar span { display: block; height: 100%; min-width: 4px; background: currentColor; transition: flex-grow .6s; }
+.mx_bar span:first-child { border-radius: 4px 0 0 4px; }
+.mx_bar span:last-child { border-radius: 0 4px 4px 0; }
+.mx_bar span:only-child { border-radius: 4px; }
+.mx_leg { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; color: #c9d0dc; }
+.mx_leg b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; margin-right: 6px; vertical-align: -1px; }
+.mx_leg em { font-style: normal; color: #8a93a5; }
+body.light .mx_leg { color: #2b3240; }
+body.light .mx_leg em { color: #667085; }
 /* Подмешивание: два источника сразу — плашка из двух цветов. */
 .chip.mixb { background: linear-gradient(90deg, #14294a 0%, #3d2f12 100%); color: #e8d9b0; }
 .chip.mixg { background: linear-gradient(90deg, #14294a 0%, #123a24 100%); color: #bfe3d0; }
@@ -317,7 +329,10 @@ body.light pre.rep { background: #f2f4f8; }
         <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span>
             <span id="gridchip" class="chip gray" style="float:right;margin:0">сеть —</span>
             <span style="clear:both;display:block"></span></h2>
-        <div class="sub" id="invmix" style="margin:-4px 0 6px;min-height:1.2em"></div>
+        <div id="invmix" class="mx hidden">
+          <div class="mx_bar" id="mx_bar"></div>
+          <div class="mx_leg" id="mx_leg"></div>
+        </div>
 
         <svg class="flowbox" viewBox="0 0 320 232" preserveAspectRatio="xMidYMid meet">
           <!-- линии рисуются первыми, чтобы уходить под блоки -->
@@ -1099,14 +1114,25 @@ function renderInv(v, b) {
   else if (v.mode === 2 && bIn > 20) chip("invmode", "green", "от сети + заряд батареи");
   else                           chip("invmode", "green", INVNAME[v.mode] || INVNAME[0]);
 
-  // Кто сколько даёт нагрузке — строкой под плашкой, только заметные доли.
+  // Подмешивание — полосой: нагрузка целиком, отрезок на каждый источник по
+  // его доле, под ней — кто сколько даёт. Только когда источников два и больше.
   var parts = [];
   if (live && v.outW > 10) {
-    if (pvP >= 3) parts.push("солнце " + pvP + " %");
-    if (bP >= 3)  parts.push("батарея " + bP + " %");
-    if (gP >= 3)  parts.push("сеть " + gP + " %");
+    if (pvP >= 3) parts.push(["c-pv", "солнце", pvUse, pvP]);
+    if (bP >= 3)  parts.push(["c-batt", "батарея", battUse, bP]);
+    if (gP >= 3)  parts.push(["c-grid", "сеть", gridUse, gP]);
   }
-  $("invmix").innerHTML = parts.length > 1 ? "нагрузку кормят: " + parts.join(" · ") : "";
+  show("invmix", parts.length > 1);
+  if (parts.length > 1) {
+    var bar = "", leg = "";
+    for (var q = 0; q < parts.length; q++) {
+      var x = parts[q];
+      bar += '<span class="' + x[0] + '" style="flex-grow:' + x[2].toFixed(0) + '" title="' + x[1] + " " + x[3] + ' %"></span>';
+      leg += '<span><b class="' + x[0] + '"></b>' + x[1] + " " + w(x[2]) + " <em>" + x[3] + " %</em></span>";
+    }
+    $("mx_bar").innerHTML = bar;
+    $("mx_leg").innerHTML = leg;
+  }
 
   // Потоки: линия живёт, только когда по ней реально идёт мощность.
   var pvOn   = live && v.pvW > 20;
