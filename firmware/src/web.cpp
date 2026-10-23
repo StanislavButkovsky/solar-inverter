@@ -68,6 +68,8 @@ static String jsonState() {
     j += ",\"dsgMos\":" + String(s.dischargeMos ? "true" : "false");
     j += ",\"remainAh\":" + String(s.remainingMah / 1000.0, 2);
     j += ",\"capAh\":" + String(s.capAh, 0);
+    j += ",\"limA\":" + String(s.chgLimitA, 1) + ",\"cvV\":" + String(s.cvV, 1);
+    j += ",\"bFault\":" + String(s.bmsFault) + ",\"bWarn\":" + String(s.bmsWarn);
     float iAvg = statsBattAvgA();
     j += ",\"iAvg\":" + String(iAvg, 1);
     j += ",\"eta\":" + String(s.socKnown ? battEtaS(s.soc, s.capAh, iAvg, cfg().tgSocLow) : 0);

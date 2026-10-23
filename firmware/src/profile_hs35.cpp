@@ -719,7 +719,9 @@ static void applyGline(const char* f[]) {
 
 // GBMS: (00008 00000 00491 65446 00220 00450 32767 02000 …
 // 2 напряжение /10, 3 ток /100 со знаком, 4 температура /10, 5 заряд /10,
-// 6 остаток /10, 7 ёмкость /10. 32767 и 65535 — «нет данных».
+// 6 остаток /10, 7 ёмкость /10, 8 код аварии BMS, 9 код предупреждения,
+// 10 разрешённый ток заряда /100, 11 напряжение заряда /10 (поля — по
+// ha-eybond-local). 32767 и 65535 — «нет данных».
 static void applyGbms(const char* f[], const char* line) {
     long rawI = inum(f[3]);
     if (rawI == 65535 || inum(f[2]) == 65535) return;    // BMS не на связи
@@ -733,6 +735,12 @@ static void applyGbms(const char* f[], const char* line) {
         b.current = amps;                 // минус — разряд
         b.chargeState = amps > 0.5f ? 1 : (amps < -0.5f ? 2 : 0);
         b.tempMax = b.tempMin = (int16_t)(inum(f[4]) / 10);
+        long lim = inum(f[10]), cv = inum(f[11]);
+        b.chgLimitA = (lim >= 0 && lim < 32767) ? lim / 100.0f : -1;
+        b.cvV       = (cv > 0 && cv < 32767) ? cv / 10.0f : -1;
+        long fc = inum(f[8]), wc = inum(f[9]);
+        b.bmsFault  = (fc > 0 && fc < 32767) ? (uint16_t)fc : 0;
+        b.bmsWarn   = (wc > 0 && wc < 32767) ? (uint16_t)wc : 0;
     });
     if (soc10 >= 0 && soc10 <= 1000) setSoc(soc10 / 10.0f, SOC_GBMS, line);
 }

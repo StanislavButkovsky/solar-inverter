@@ -57,6 +57,12 @@ struct BmsState {
     uint8_t  faults[8]           = {0};   // битовые маски аварий, DataID 0x98
     bool     haveFaults          = false;
 
+    // --- что BMS сообщает инвертору (HS35, ответ GBMS) ---
+    float    chgLimitA     = -1;     // ток заряда, который BMS разрешает; −1 — нет данных
+    float    cvV           = -1;     // напряжение заряда, которое BMS просит
+    uint16_t bmsFault      = 0;      // код аварии BMS, 0 — нет
+    uint16_t bmsWarn       = 0;      // код предупреждения BMS, 0 — нет
+
     // --- производные ---
     float    power() const  { return voltage * current; }          // Вт
     uint16_t spreadMv() const {

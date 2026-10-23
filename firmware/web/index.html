@@ -441,7 +441,20 @@ body.light pre.rep { background: #f2f4f8; }
       </div></div>
     </div>
 
-    <div class="row">
+    <div class="row hidden" id="bmsrow">
+      <div class="col c3"><div class="card tile">
+        <div class="k">BMS разрешает заряд</div><div class="v"><span id="blim">—</span><span> А</span></div>
+        <div class="sub" id="blimsub"></div>
+      </div></div>
+      <div class="col c3"><div class="card tile">
+        <div class="k">Напряжение заряда BMS</div><div class="v"><span id="bcv">—</span><span> В</span></div>
+      </div></div>
+      <div class="col c3"><div class="card tile">
+        <div class="k">Состояние BMS</div><div class="v" style="font-size:18px;padding-top:6px" id="bstate">—</div>
+      </div></div>
+    </div>
+
+    <div class="row" id="cellsrow">
       <div class="col c1"><div class="card">
         <h2>Ячейки <span id="cellinfo" style="text-transform:none;letter-spacing:0;color:#8a93a5"></span></h2>
         <div class="cellbox" id="cells"></div>
@@ -452,13 +465,13 @@ body.light pre.rep { background: #f2f4f8; }
       <div class="col c4"><div class="card tile">
         <div class="k">Температура</div><div class="v"><span id="tmax">—</span><span> °C</span></div>
       </div></div>
-      <div class="col c4"><div class="card tile">
+      <div class="col c4 cellonly"><div class="card tile">
         <div class="k">Разброс</div><div class="v"><span id="spread">—</span><span> мВ</span></div>
       </div></div>
       <div class="col c4"><div class="card tile">
         <div class="k">Запас энергии</div><div class="v"><span id="remain">—</span><span> кВт·ч</span></div>
       </div></div>
-      <div class="col c4"><div class="card tile">
+      <div class="col c4 cellonly"><div class="card tile">
         <div class="k">Защита BMS</div><div class="v" style="font-size:18px;padding-top:6px" id="mos">—</div>
       </div></div>
     </div>
@@ -1266,6 +1279,25 @@ function render(s) {
   $("mos").innerHTML =
       '<span class="chip ' + (b.chgMos ? "green" : "red") + '" style="margin:0 6px 0 0">заряд</span>' +
       '<span class="chip ' + (b.dsgMos ? "green" : "red") + '" style="margin:0">разряд</span>';
+
+  /* --- что BMS сообщает инвертору (HS35): лимит тока, напряжение заряда, коды --- */
+  var viaInv = b.cellCount === 0 && b.limA >= 0;
+  show("bmsrow", viaInv);
+  // Ячеек, разброса и ключей через инвертор не приходит — пустые карточки прячем.
+  show("cellsrow", b.cellCount > 0);
+  var co = document.querySelectorAll(".cellonly");
+  for (var c = 0; c < co.length; c++) co[c].classList.toggle("hidden", b.cellCount === 0 && b.socKnown);
+  if (viaInv) {
+    $("blim").innerHTML = fmt(b.limA, 0);
+    // Лимит заметно ниже обычного — значит, батарея близка к полной (или
+    // холодная/горячая), и BMS сама притормаживает заряд.
+    $("blimsub").innerHTML = b.i > 1 ? "заряд сейчас " + fmt(b.i, 1) + " А" : "";
+    $("bcv").innerHTML = b.cvV > 0 ? fmt(b.cvV, 1) : "—";
+    $("bstate").innerHTML = b.bFault
+      ? '<span class="chip red" style="margin:0">авария, код ' + b.bFault + '</span>'
+      : (b.bWarn ? '<span class="chip amber" style="margin:0">предупреждение, код ' + b.bWarn + '</span>'
+                 : '<span class="chip green" style="margin:0">в норме</span>');
+  }
 
   /* --- ячейки --- */
   if (cellNodes.length !== b.cellCount) buildCells(b.cellCount);

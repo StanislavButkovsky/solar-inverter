@@ -607,6 +607,14 @@ static const float   GRID_LO = 190, GRID_HI = 250, GRID_OK_LO = 200, GRID_OK_HI 
 static void alarmsLoop(const InvState& v, const BmsState& b) {
     static Alarm hot, load, volt, pv;
     if (!v.fresh || millis() < 120000) return;
+    // Коды аварии и предупреждения самой BMS (HS35 передаёт их в GBMS).
+    static uint16_t pF = 0, pW = 0;
+    if (b.fresh && (b.bmsFault != pF || b.bmsWarn != pW)) {
+        if (b.bmsFault && b.bmsFault != pF) tgNotify("❗ BMS батареи сообщает об аварии, код " + String(b.bmsFault) + "\n" + battLine());
+        else if (b.bmsWarn && b.bmsWarn != pW) tgNotify("⚠️ BMS батареи: предупреждение, код " + String(b.bmsWarn) + "\n" + battLine());
+        else if (!b.bmsFault && !b.bmsWarn) tgNotify("✅ BMS батареи: снова в норме");
+        pF = b.bmsFault; pW = b.bmsWarn;
+    }
     alarmStep(hot, v.tempC >= TEMP_HOT, v.tempC <= TEMP_OK, 60,
               "🌡 Инвертор греется: " + String(v.tempC) + " °C. Проверьте, не закрыта ли вентиляция.",
               "✅ Температура инвертора в норме: " + String(v.tempC) + " °C");
