@@ -39,6 +39,9 @@ a { color: #4c9aff; text-decoration: none; }
 .chip.amber { background: #3d2f12; color: #f0a83c; }
 .chip.red   { background: #3d1c17; color: #ff6d55; }
 .chip.blue  { background: #14294a; color: #6cb0ff; }
+/* Подмешивание: два источника сразу — плашка из двух цветов. */
+.chip.mixb { background: linear-gradient(90deg, #14294a 0%, #3d2f12 100%); color: #e8d9b0; }
+.chip.mixg { background: linear-gradient(90deg, #14294a 0%, #123a24 100%); color: #bfe3d0; }
 /* Инвертированный вид: не подсветка на фоне, а сплошная заливка. Пропадание
    сети — единственное, ради чего стоит кричать со страницы. */
 .chip.solidred { background: #e5573f; color: #fff; font-weight: 700;
@@ -206,6 +209,8 @@ body.light .chip.green { background: #d8f5e4; color: #0f7440; }
 body.light .chip.amber { background: #fdf0d4; color: #8a5a06; }
 body.light .chip.red   { background: #fde1dc; color: #a32c17; }
 body.light .chip.blue  { background: #dce9ff; color: #14479e; }
+body.light .chip.mixb { background: linear-gradient(90deg, #dce9ff 0%, #fdf0d4 100%); color: #3d3a20; }
+body.light .chip.mixg { background: linear-gradient(90deg, #dce9ff 0%, #d8f5e4 100%); color: #1d3a2c; }
 
 /* График за сутки: цвет — величина, тот же, что на схеме; проверено
    валидатором палитры для обеих тем. Батарея пунктиром: с солнцем её хуже
@@ -312,6 +317,7 @@ body.light pre.rep { background: #f2f4f8; }
         <h2><span id="invmode" class="chip gray" style="margin-left:0">нет связи</span>
             <span id="gridchip" class="chip gray" style="float:right;margin:0">сеть —</span>
             <span style="clear:both;display:block"></span></h2>
+        <div class="sub" id="invmix" style="margin:-4px 0 6px;min-height:1.2em"></div>
 
         <svg class="flowbox" viewBox="0 0 320 232" preserveAspectRatio="xMidYMid meet">
           <!-- линии рисуются первыми, чтобы уходить под блоки -->
@@ -1069,16 +1075,38 @@ function w(x) { return Math.abs(x) >= 1000 ? (x / 1000).toFixed(2) + " кВт"
 function renderInv(v, b) {
   var live = v.linked && v.fresh;
 
-  // Солнце перекрывает потребление целиком — это отдельное состояние, а не
-  // режим инвертора: формально он всё ещё «от батареи», но энергия идёт
-  // от панелей, и батарея при этом заряжается. Отсюда свой цвет и своя подпись.
-  var solar = live && v.pvW > 20 && v.pvW >= v.outW;
+  // Режим инвертора («от батареи», «от сети») не говорит, откуда на деле
+  // идёт энергия: при «от батареи» нагрузку часто кормят панели, а батарея
+  // лишь добирает недостающее. Поэтому подпись — по тому, кто кормит
+  // нагрузку сейчас: солнце берётся первым, потом батарея, остаток — сеть.
+  var bOut = live && b.socKnown && b.i < -1 ? Math.abs(b.p) : 0;   // разряд батареи, Вт
+  var bIn  = live && b.socKnown && b.i > 1 ? b.p : 0;              // заряд батареи, Вт
+  var pvUse = live ? Math.min(Math.max(v.pvW, 0), v.outW) : 0;
+  var rest = live ? Math.max(v.outW - pvUse, 0) : 0;
+  var battUse = Math.min(bOut, rest);
+  rest -= battUse;
+  var gridUse = live && v.grid && (v.mode === 2 || v.mode === 4) ? rest : 0;
+  var share = function (x) { return v.outW > 0 ? Math.round(x / v.outW * 100) : 0; };
+  var pvP = share(pvUse), bP = share(battUse), gP = share(gridUse);
+  var sunOn = v.pvW > 20 && pvP >= 3;
 
-  if (!live)             chip("invmode", "gray",  "нет связи");
-  else if (v.mode === 5) chip("invmode", "red",   INVNAME[5]);
-  else if (solar)        chip("invmode", "blue",  "работа от солнца");
-  else if (v.mode === 3) chip("invmode", "amber", INVNAME[3]);
-  else                   chip("invmode", "green", INVNAME[v.mode] || INVNAME[0]);
+  if (!live)                     chip("invmode", "gray",  "нет связи");
+  else if (v.mode === 5)         chip("invmode", "red",   INVNAME[5]);
+  else if (sunOn && bP >= 3)     chip("invmode", "mixb",  "подмешивание: солнце + батарея");
+  else if (sunOn && gP >= 3)     chip("invmode", "mixg",  "подмешивание: солнце + сеть");
+  else if (sunOn)                chip("invmode", "blue",  bIn > 20 ? "от солнца, излишек в батарею" : "работа от солнца");
+  else if (v.mode === 3)         chip("invmode", "amber", INVNAME[3]);
+  else if (v.mode === 2 && bIn > 20) chip("invmode", "green", "от сети + заряд батареи");
+  else                           chip("invmode", "green", INVNAME[v.mode] || INVNAME[0]);
+
+  // Кто сколько даёт нагрузке — строкой под плашкой, только заметные доли.
+  var parts = [];
+  if (live && v.outW > 10) {
+    if (pvP >= 3) parts.push("солнце " + pvP + " %");
+    if (bP >= 3)  parts.push("батарея " + bP + " %");
+    if (gP >= 3)  parts.push("сеть " + gP + " %");
+  }
+  $("invmix").innerHTML = parts.length > 1 ? "нагрузку кормят: " + parts.join(" · ") : "";
 
   // Потоки: линия живёт, только когда по ней реально идёт мощность.
   var pvOn   = live && v.pvW > 20;
