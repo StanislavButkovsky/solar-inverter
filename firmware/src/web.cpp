@@ -154,6 +154,18 @@ static String jsonState() {
     return j;
 }
 
+// Сеть, Bluetooth и демо — тоже под паролем модуля, когда он задан. Раньше
+// они были открыты: в домашней сети это удобно, но страница теперь видна и
+// из интернета (KeenDNS), и смена Wi-Fi из-за чужого клика уводила бы модуль
+// из сети. Пока пароля нет — первая настройка через точку доступа — всё
+// открыто, как и было. Параметр — mpass: «pass» у /api/config — пароль Wi-Fi.
+static bool denied() {
+    if (!otaPasswordSet() || server.arg("mpass") == cfg().webPass) return false;
+    server.send(200, "application/json; charset=utf-8",
+                "{\"ok\":false,\"error\":\"нужен пароль модуля\"}");
+    return true;
+}
+
 static void sendIcon() {
     server.sendHeader("Cache-Control", "max-age=604800");
     server.send_P(200, "image/png", (const char*)ICON_PNG, ICON_PNG_LEN);
@@ -193,6 +205,7 @@ void webStart() {
     });
 
     server.on("/api/ble/release", HTTP_GET, []() {
+        if (denied()) return;
         uint32_t m = server.hasArg("min") ? server.arg("min").toInt() : 10;
         if (m < 1)  m = 1;
         if (m > 60) m = 60;
@@ -205,6 +218,7 @@ void webStart() {
         // ответ уже уйдёт и соединение закроется. Запуск прямо здесь съедает
         // ответ — радио уходит скакать по каналам, не успев его отправить,
         // и страница остаётся ждать вечно.
+        if (denied()) return;
         s_wifiScanReq = true;
         server.send(200, "application/json", "{\"ok\":true}");
     });
@@ -215,6 +229,7 @@ void webStart() {
     });
 
     server.on("/api/config", HTTP_GET, []() {
+        if (denied()) return;
         if (server.hasArg("ssid"))   cfg().ssid   = server.arg("ssid");
         if (server.hasArg("pass"))   cfg().pass   = server.arg("pass");
         if (server.hasArg("bmsmac")) cfg().bmsMac = server.arg("bmsmac");
@@ -239,6 +254,7 @@ void webStart() {
     });
 
     server.on("/api/ble/scan", HTTP_GET, []() {
+        if (denied()) return;
         dalyRequestScan();
         server.send(200, "application/json", "{\"ok\":true}");
     });
@@ -263,6 +279,7 @@ void webStart() {
     });
 
     server.on("/api/ble/bind", HTTP_GET, []() {
+        if (denied()) return;
         String mac = server.hasArg("mac") ? server.arg("mac") : String("");
         if (server.hasArg("what") && server.arg("what") == "inv") invBind(mac);
         else                                                      dalyBind(mac);
@@ -270,6 +287,7 @@ void webStart() {
     });
 
     server.on("/api/sim", HTTP_GET, []() {
+        if (denied()) return;
         bool on = server.hasArg("on") && server.arg("on") == "1";
         simSetEnabled(on);
         server.send(200, "application/json", "{\"ok\":true}");

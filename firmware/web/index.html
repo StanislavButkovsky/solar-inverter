@@ -650,6 +650,10 @@ body.light pre.rep { background: #f2f4f8; }
         <tr><td>Состояние</td><td id="s_wifi">—</td></tr>
         <tr><td>Адрес</td><td id="s_ip">—</td></tr>
       </table>
+      <div class="mp_row">
+        <label>Пароль модуля</label>
+        <input id="mp_net" type="password" autocomplete="current-password">
+      </div>
       <div style="margin-top:14px">
         <button class="wide" onclick="wifiScan()" id="wscanbtn">Найти доступные сети</button>
       </div>
@@ -685,6 +689,10 @@ body.light pre.rep { background: #f2f4f8; }
   <div class="row" data-tab="batt">
     <div class="col c1"><div class="card">
       <h2>Батарея</h2>
+      <div class="mp_row" style="margin-bottom:10px">
+        <label>Пароль модуля (поиск, привязка, демо)</label>
+        <input id="mp_batt" type="password" autocomplete="current-password">
+      </div>
       <div class="sub" style="margin-bottom:12px">
         Показывает всё, что модуль слышит в эфире, и предлагает привязать найденное
         как батарею или как донгл инвертора. Заодно проверяется, добивает ли Bluetooth
@@ -1376,9 +1384,25 @@ function render(s) {
 }
 
 /* ----------------------------------------- действия */
+// Сеть, Bluetooth и демо — под паролем модуля, когда он задан (см. web.cpp).
+function mp(id) { return "&mpass=" + encodeURIComponent($(id).value); }
+function mpShow(on) {
+  var r = document.querySelectorAll(".mp_row");
+  for (var i = 0; i < r.length; i++) r[i].style.display = on ? "" : "none";
+}
 var simOn = false;
-function simToggle() { get("/api/sim?on=" + (simOn ? "0" : "1"), function () { setTimeout(tick, 300); }); }
-function release()   { get("/api/ble/release?min=10", function () { setTimeout(tick, 300); }); }
+function simToggle() {
+  get("/api/sim?on=" + (simOn ? "0" : "1") + mp("mp_batt"), function (r) {
+    if (r.ok === false) { alert(r.error); return; }
+    setTimeout(tick, 300);
+  });
+}
+function release() {
+  get("/api/ble/release?min=10" + mp("mp_batt"), function (r) {
+    if (r.ok === false) { $("rel").innerHTML = r.error; return; }
+    setTimeout(tick, 300);
+  });
+}
 
 var foundUntil = 0;
 function bleScan() {
@@ -1386,8 +1410,11 @@ function bleScan() {
   $("found").innerHTML = '<div class="sub">сканирую эфир…</div>';
   foundUntil = (new Date()).getTime() + 25000;
   busyRadio = true;
-  get("/api/ble/scan",
-      function () { setTimeout(pollFound, 1500); },
+  get("/api/ble/scan" + "?x=1" + mp("mp_batt"),
+      function (r) {
+        if (r.ok === false) { busyRadio = false; $("scanbtn").disabled = false; $("found").innerHTML = '<div class="sub">' + r.error + '</div>'; return; }
+        setTimeout(pollFound, 1500);
+      },
       function () { setTimeout(pollFound, 1500); });
 }
 function pollFound() {
@@ -1425,8 +1452,8 @@ function pollFound() {
   }, function () { setTimeout(pollFound, 1000); });
 }
 function bind(mac, what) {
-  get("/api/ble/bind?what=" + what + "&mac=" + encodeURIComponent(mac), function () {
-    $("found").innerHTML = '<div class="sub">привязано, подключаюсь…</div>';
+  get("/api/ble/bind?what=" + what + "&mac=" + encodeURIComponent(mac) + mp("mp_batt"), function (r) {
+    $("found").innerHTML = '<div class="sub">' + (r.ok === false ? r.error : "привязано, подключаюсь…") + '</div>';
   });
 }
 
@@ -1436,8 +1463,11 @@ function wifiScan() {
   $("nets").innerHTML = '<div class="sub">ищу сети…</div>';
   netsUntil = (new Date()).getTime() + 25000;
   busyRadio = true;                       // не мешаем сканированию опросом состояния
-  get("/api/wifi/scan",
-      function () { setTimeout(pollNets, 1500); },
+  get("/api/wifi/scan" + "?x=1" + mp("mp_net"),
+      function (r) {
+        if (r.ok === false) { busyRadio = false; $("wscanbtn").disabled = false; $("nets").innerHTML = '<div class="sub">' + r.error + '</div>'; return; }
+        setTimeout(pollNets, 1500);
+      },
       function () { setTimeout(pollNets, 1500); });   // ответ мог потеряться, но поиск идёт
 }
 function pollNets() {
@@ -1474,8 +1504,12 @@ function saveCfg() {
   if (!$("ssid").value) { alert("Введите имя сети"); return; }
   var name = $("ssid").value;
   var u = "/api/config?ssid=" + encodeURIComponent(name) +
-          "&pass=" + encodeURIComponent($("pass").value);
-  get(u, function () {});
+          "&pass=" + encodeURIComponent($("pass").value) + mp("mp_net");
+  // Отказ (нет пароля модуля) приходит ответом; успех — тоже, но модуль сразу
+  // уходит в перезагрузку, и ответ может не дойти: молчание считаем успехом.
+  get(u, function (r) { if (r.ok === false) alert(r.error); else cfgSaved(name); }, function () { cfgSaved(name); });
+}
+function cfgSaved(name) {
   // Дальше модуль уедет в другую сеть и эта вкладка умрёт. Объясняем заранее,
   // как найти его снова, потому что новый адрес выдаст чужой DHCP.
   $("saved").getElementsByTagName("div")[0].innerHTML =
@@ -1490,7 +1524,7 @@ function saveCfg() {
     'Точка доступа специально держится <b>10 минут</b> после смены сети.</li>' +
     '<li>Открыть <b>http://solar.local</b> — работает, если устройство понимает mDNS.</li>' +
     '<li>Посмотреть список клиентов на роутере — модуль там под именем ' +
-    '<b>Solar-…</b>, MAC начинается на 20:9b:a9.</li>' +
+    '<b>Solar-…</b>.</li>' +
     '</ol>' +
     '<p class="sub">Адрес удобно закрепить за модулем на роутере, чтобы он больше не менялся.</p>' +
     '</div>';
@@ -1903,6 +1937,7 @@ function otaRender(s) {
   if (otaKnown === s.otaPass) return;           // не дёргать форму на каждом опросе
   otaKnown = s.otaPass;
   show("ota_setpass", !s.otaPass);
+  mpShow(!!s.otaPass);
   show("ota_form", !!s.otaPass);
 }
 function setPass() {
