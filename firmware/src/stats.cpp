@@ -25,6 +25,8 @@ static const char* F_DAYS  = "/stats/days.bin";
 static const char* F_HOURS = "/stats/hours.bin";
 static const char* F_OUT   = "/stats/outages.bin";
 static const char* F_PWR   = "/stats/power.bin";
+static const char* F_MIXD  = "/stats/mixd.bin";   // кто кормил нагрузку — по дням
+static const char* F_MIXH  = "/stats/mixh.bin";   // — по часам
 
 // Мощности за сутки: средние за 5 минут, 288 точек кольцом — для графика.
 // Вт со знаком у батареи (заряд +, разряд −); заряд в процентах, 255 — нет.
@@ -116,6 +118,19 @@ void statsTodayOutages(uint32_t& seconds, uint16_t& count) {
 uint32_t statsDay() { return s_bound ? s_day.day : 0; }
 
 static void dayAt(uint32_t d, DayRec& r);
+
+// Состав нагрузки: сколько её энергии дали солнце, батарея и сеть. Каждую
+// секунду, как полоса подмешивания на дашборде: солнце первым (сколько его
+// хватает на нагрузку), потом батарея (её разряд по току BMS), остаток — сеть,
+// если инвертор от неё работает, иначе — батарея (погрешность измерения).
+// Сумма трёх — ровно нагрузка. Отдельные файлы, а не поля DayRec: в нём
+// места не осталось, а менять его размер — терять историю. Пишется с
+// 24.10.2026; у прежних дней состава нет.
+struct MixRec { uint32_t t; float pv, batt, grid; };
+static_assert(sizeof(MixRec) == 16, "MixRec");
+static MixRec s_mixD, s_mixH, s_mixP;                  // день, час, без времени
+static void readMix(const char* f, uint16_t n, uint32_t t, MixRec& r);
+static void writeMix(const char* f, uint16_t n, const MixRec& r);
 
 bool statsSum(uint32_t from, uint32_t to, StatSum& o) {
     memset(&o, 0, sizeof(o));
@@ -274,6 +289,8 @@ static void flush() {
     if (!s_fs || !s_bound) return;
     writeDay(s_day);
     writeHour(s_hour);
+    writeMix(F_MIXD, NDAYS, s_mixD);
+    writeMix(F_MIXH, NHOURS, s_mixH);
 
     // Текущее отключение: конец «пока что» — чтобы после пропажи питания
     // в журнале остался хотя бы его нижний предел.
@@ -301,6 +318,11 @@ static void bindTime() {
     if (s_hour.hour != h) { memset(&s_hour, 0, sizeof(s_hour)); s_hour.hour = h; }
     mergeDay(s_day, s_pend);
     mergeHour(s_hour, s_pendH);
+    readMix(F_MIXD, NDAYS, d, s_mixD);
+    readMix(F_MIXH, NHOURS, h, s_mixH);
+    s_mixD.pv += s_mixP.pv; s_mixD.batt += s_mixP.batt; s_mixD.grid += s_mixP.grid;
+    s_mixH.pv += s_mixP.pv; s_mixH.batt += s_mixP.batt; s_mixH.grid += s_mixP.grid;
+    memset(&s_mixP, 0, sizeof(s_mixP));
 
     memset(&s_pend, 0, sizeof(s_pend));
     memset(&s_pendH, 0, sizeof(s_pendH));
@@ -314,8 +336,12 @@ static void rollover() {
         writeHour(s_hour);
         readHour(h, s_hour);
         if (s_hour.hour != h) { memset(&s_hour, 0, sizeof(s_hour)); s_hour.hour = h; }
+        writeMix(F_MIXH, NHOURS, s_mixH);
+        readMix(F_MIXH, NHOURS, h, s_mixH);
     }
     if (d != s_day.day) {
+        writeMix(F_MIXD, NDAYS, s_mixD);
+        readMix(F_MIXD, NDAYS, d, s_mixD);
         writeDay(s_day);
         readDay(d, s_day);
         if (s_day.day != d) { memset(&s_day, 0, sizeof(s_day)); s_day.day = d; }
@@ -392,6 +418,22 @@ void statsLoop() {
         D.pvWh   += pv;           H.pvWh   += pv;
         D.chgWh  += v.chgW  * k;  H.chgWh  += v.chgW  * k;
 
+        // Кто кормил нагрузку в эту секунду (см. MixRec).
+        {
+            float lw = v.outW > 0 ? v.outW : 0;
+            float pvU = fminf(v.pvW > 0 ? v.pvW : 0, lw);
+            float rest = lw - pvU;
+            float bOut = (b.fresh && b.current < -0.3f) ? -b.current * b.voltage : 0;
+            float bU = fminf(bOut, rest);
+            rest -= bU;
+            bool fromGrid = v.gridOn && (v.mode == INVM_LINE || v.mode == INVM_BYPASS);
+            float gU = fromGrid ? rest : 0;
+            if (!fromGrid) bU += rest;
+            MixRec& M = s_bound ? s_mixD : s_mixP;
+            M.pv += pvU * k; M.batt += bU * k; M.grid += gU * k;
+            if (s_bound) { s_mixH.pv += pvU * k; s_mixH.batt += bU * k; s_mixH.grid += gU * k; }
+        }
+
         if (s_bound) pwrSample(v, b);
         if (b.fresh && b.current < -0.3f) D.ahOut += -b.current * k;   // А·ч разряда — для износа
         if (b.fresh && b.socKnown) {
@@ -438,6 +480,8 @@ void statsStart() {
     ensureFile(F_HOURS, NHOURS * sizeof(HourRec));
     ensureFile(F_OUT,   sizeof(OutHdr) + NOUT * sizeof(OutRec));
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
+    ensureFile(F_MIXD,  NDAYS * sizeof(MixRec));
+    ensureFile(F_MIXH,  NHOURS * sizeof(MixRec));
     LittleFS.remove("/stats/cnt.bin");            // от сборки 22.10, где счётчики ещё учитывались
 
     // Отключение, оборванное пропажей питания платы, закрываем тем концом,
@@ -463,9 +507,25 @@ static void put(String& j, const char* k, float v, int dec) { j += ",\""; j += k
 static void put(String& j, const char* k, uint32_t v)       { j += ",\""; j += k; j += "\":"; j += String(v); }
 
 // Столбик: подпись t (час, сутки от 1970 или месяц как год*12+месяц) и суммы.
-static void bar(String& j, uint32_t t, const DayRec& r, bool first) {
+static void readMix(const char* f, uint16_t n, uint32_t t, MixRec& r) {
+    readAt(f, (t % n) * sizeof(MixRec), &r, sizeof(r));
+    if (r.t != t) { memset(&r, 0, sizeof(r)); r.t = t; }
+}
+static void writeMix(const char* f, uint16_t n, const MixRec& r) {
+    if (r.t) writeAt(f, (r.t % n) * sizeof(MixRec), &r, sizeof(r));
+}
+static void mixDayAt(uint32_t d, MixRec& r) {
+    if (d == s_mixD.t) { r = s_mixD; return; }
+    readMix(F_MIXD, NDAYS, d, r);
+}
+static void putMix(String& j, const MixRec& m) {
+    put(j, "lp", m.pv, 0); put(j, "lb", m.batt, 0); put(j, "lg", m.grid, 0);
+}
+
+static void bar(String& j, uint32_t t, const DayRec& r, bool first, const MixRec* m = nullptr) {
     if (!first) j += ",";
     j += "{\"t\":"; j += String(t);
+    if (m) putMix(j, *m);
     put(j, "g", r.gridWh, 0); put(j, "l", r.loadWh, 0); put(j, "b", r.battWh, 0);
     put(j, "p", r.pvWh, 0);   put(j, "c", r.chgWh, 0);
     put(j, "o", r.outageS);   put(j, "n", (uint32_t)r.outages); put(j, "d", r.dataS);
@@ -513,6 +573,8 @@ String statsJson(const String& range) {
     uint32_t d0 = s_day.day;
     DayRec tot;
     memset(&tot, 0, sizeof(tot));
+    MixRec mtot;
+    memset(&mtot, 0, sizeof(mtot));
     j = "{\"valid\":true,\"range\":\"" + range + "\",\"today\":" + String(d0) + ",\"bars\":[";
 
     if (range == "day") {
@@ -521,9 +583,12 @@ String statsJson(const String& range) {
             HourRec r;
             if (h == s_hour.hour) r = s_hour;
             else { readHour(h, r); if (r.hour != h) memset(&r, 0, sizeof(r)); }
-            bar(j, i, fromHour(r), i == 0);
+            MixRec m;
+            if (h == s_mixH.t) m = s_mixH; else readMix(F_MIXH, NHOURS, h, m);
+            bar(j, i, fromHour(r), i == 0, &m);
         }
         tot = s_day;
+        mtot = s_mixD;
     } else if (range == "week" || range == "month") {
         uint32_t from = d0 - 6;
         if (range == "month") {
@@ -535,8 +600,11 @@ String statsJson(const String& range) {
         for (uint32_t d = from; d <= d0; d++) {
             DayRec r;
             dayAt(d, r);
-            bar(j, d, r, d == from);
+            MixRec m;
+            mixDayAt(d, m);
+            bar(j, d, r, d == from, &m);
             mergeDay(tot, r);
+            mtot.pv += m.pv; mtot.batt += m.batt; mtot.grid += m.grid;
         }
     } else {                                           // year: 12 месяцев, текущий последним
         time_t t = (time_t)d0 * 86400;
@@ -545,6 +613,8 @@ String statsJson(const String& range) {
         int32_t mNow = (tmv.tm_year + 1900) * 12 + tmv.tm_mon;
         DayRec months[12];
         memset(months, 0, sizeof(months));
+        MixRec mm[12];
+        memset(mm, 0, sizeof(mm));
         // Все 366 ячеек одним проходом по файлу; сегодняшний день — из памяти,
         // он новее записанного.
         File f = LittleFS.open(F_DAYS, "r");
@@ -559,15 +629,23 @@ String statsJson(const String& range) {
             int32_t back = mNow - ((tmv.tm_year + 1900) * 12 + tmv.tm_mon);
             if (back < 0 || back > 11) continue;
             mergeDay(months[11 - back], r);
+            MixRec m;
+            mixDayAt(r.day, m);
+            MixRec& M = mm[11 - back];
+            M.pv += m.pv; M.batt += m.batt; M.grid += m.grid;
         }
         if (f) f.close();
         for (int i = 0; i < 12; i++) {
-            bar(j, (uint32_t)(mNow - 11 + i), months[i], i == 0);
+            bar(j, (uint32_t)(mNow - 11 + i), months[i], i == 0, &mm[i]);
             mergeDay(tot, months[i]);
+            mtot.pv += mm[i].pv; mtot.batt += mm[i].batt; mtot.grid += mm[i].grid;
         }
     }
     j += "]";
     totals(j, tot);
+    j += ",\"mix\":{\"x\":0";
+    putMix(j, mtot);
+    j += "}";
     j += ",\"inOutage\":"; j += s_inOut ? "true" : "false";
     return j + "}";
 }
@@ -580,6 +658,12 @@ void statsClear() {
     s_inOut = false; s_lossSince = 0; s_outSlot = -1;
     if (!s_fs) return;
     LittleFS.remove(F_DAYS); LittleFS.remove(F_HOURS); LittleFS.remove(F_OUT); LittleFS.remove(F_PWR);
+    LittleFS.remove(F_MIXD); LittleFS.remove(F_MIXH);
+    ensureFile(F_MIXD, NDAYS * sizeof(MixRec));
+    ensureFile(F_MIXH, NHOURS * sizeof(MixRec));
+    memset(&s_mixD, 0, sizeof(s_mixD)); s_mixD.t = s_bound ? today() : 0;
+    memset(&s_mixH, 0, sizeof(s_mixH)); s_mixH.t = s_bound ? thisHour() : 0;
+    memset(&s_mixP, 0, sizeof(s_mixP));
 
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
     s_pSlot = 0; s_pN = s_pSocN = 0;

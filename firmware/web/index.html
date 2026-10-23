@@ -577,7 +577,7 @@ body.light pre.rep { background: #f2f4f8; }
               onclick="stMetric('o')" id="sm_o">Без сети</button>
     </div>
     <div class="mx_leg hidden" id="st_leg" style="margin:4px 0 6px">
-      <span><b class="c-pv"></b>солнце</span><span><b class="c-grid"></b>из сети</span><span><b class="c-load"></b>нагрузка</span>
+      <span><b class="c-load"></b>нагрузка</span><span><b class="c-pv"></b>солнце</span><span><b class="c-batt"></b>батарея</span><span><b class="c-grid"></b>сеть</span>
     </div>
     <div id="st_tip" class="sub">нажмите на столбик</div>
     <svg class="bars" id="st_svg" viewBox="0 0 400 170" preserveAspectRatio="none"></svg>
@@ -2193,7 +2193,6 @@ function pwDraw() {
 
 /* ----------------------------------------- статистика */
 var stR = "day", stM = "all", stData = null, stSel = -1;
-var ST_GROUP = [["p", "солнце", "c-pv"], ["g", "из сети", "c-grid"], ["l", "нагрузка", "c-load"]];
 var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
 function kwh(wh) {
@@ -2283,48 +2282,71 @@ function stBar(cls, x, w, base, bh) {
          'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) + 'V' + base + 'Z"/>';
 }
 
-// «Вместе»: на каждый период — солнце, сеть, нагрузка рядом, одна ось кВт·ч.
+// «Вместе»: на каждый период два столбика — нагрузка целиком и рядом то,
+// из чего она сложилась: солнце снизу, батарея, сеть сверху. Части в сумме
+// и есть нагрузка, поэтому высоты равны, а доли видны сразу. Состав плата
+// пишет с 24.10.2026; у прежних периодов — только столбик нагрузки.
+var MIX_PARTS = [["lp", "солнце", "c-pv"], ["lb", "батарея", "c-batt"], ["lg", "сеть", "c-grid"]];
 function stDrawGroup() {
   var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
-  $("st_title").innerHTML = "Солнце, сеть и нагрузка, " + per;
+  $("st_title").innerHTML = "Нагрузка и из чего она сложилась, " + per;
   var svg = $("st_svg"), s = stData;
   if (!s || !s.bars) { svg.innerHTML = ""; $("st_table").innerHTML = ""; return; }
   var bars = s.bars, n = bars.length, max = 0;
-  for (var k = 0; k < n; k++) for (var g = 0; g < 3; g++) max = Math.max(max, bars[k][ST_GROUP[g][0]] || 0);
+  for (var k = 0; k < n; k++) max = Math.max(max, bars[k].l || 0, (bars[k].lp || 0) + (bars[k].lb || 0) + (bars[k].lg || 0));
   var W = 400, H = 170, top = 12, bottom = 18, plot = H - top - bottom, base = top + plot;
-  var slot = W / n, gap = Math.max(1, Math.min(4, slot * 0.18)), inner = slot - gap;
-  var bw = Math.max(1, (inner - 2 * Math.min(1, inner * 0.06)) / 3), ig = (inner - bw * 3) / 2;
+  var slot = W / n, gap = Math.max(1, Math.min(5, slot * 0.22)), inner = slot - gap;
+  var ig = Math.min(1.5, inner * 0.08), bw = Math.max(1, (inner - ig) / 2);
+  var sc = function (v) { return max ? plot * v / max : 0; };
   var h = "";
-  // Две линии сетки с подписью — чтобы высоту можно было прочитать.
   for (var q = 1; q <= 2; q++) {
-    var gv = max * q / 2, gy = base - plot * q / 2;
+    var gy = base - plot * q / 2;
     h += '<line class="gl" x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '"/>' +
-         '<text class="gv" x="2" y="' + (gy - 2) + '">' + kwh(gv) + ' кВт·ч</text>';
+         '<text class="gv" x="2" y="' + (gy - 2) + '">' + kwh(max * q / 2) + ' кВт·ч</text>';
   }
   h += '<line class="gl" x1="0" x2="' + W + '" y1="' + base + '" y2="' + base + '"/>';
   var step = n > 12 ? Math.ceil(n / 8) : 1;
   for (var j = 0; j < n; j++) {
-    var x0 = j * slot + gap / 2;
-    for (var g2 = 0; g2 < 3; g2++) {
-      var v = bars[j][ST_GROUP[g2][0]] || 0;
-      var bh = max ? Math.max(v ? 1.5 : 0, plot * v / max) : 0;
-      if (bh > 0) h += stBar("gb " + ST_GROUP[g2][2] + (stSel >= 0 && stSel !== j ? " dim" : ""), x0 + g2 * (bw + ig), bw, base, bh);
+    var B = bars[j], x0 = j * slot + gap / 2, dim = stSel >= 0 && stSel !== j ? " dim" : "";
+    var lh = sc(B.l || 0);
+    if (lh > 0) h += stBar("gb c-load" + dim, x0, bw, base, Math.max(lh, 1.5));
+    // Состав — стопкой; между частями — зазор цвета фона.
+    var y = base, xs = x0 + bw + ig, parts = 0;
+    for (var m = 0; m < 3; m++) if ((B[MIX_PARTS[m][0]] || 0) > 0) parts++;
+    var done = 0;
+    for (var m2 = 0; m2 < 3; m2++) {
+      var v = B[MIX_PARTS[m2][0]] || 0, ph = sc(v);
+      if (ph <= 0) continue;
+      done++;
+      var g = done < parts ? Math.min(1, ph * 0.3) : 0, hh = Math.max(ph - g, 0.8);
+      if (done === parts) h += stBar("gb " + MIX_PARTS[m2][2] + dim, xs, bw, y, hh);         // верх — скруглён
+      else h += '<rect class="gb ' + MIX_PARTS[m2][2] + dim + '" x="' + xs + '" y="' + (y - hh) + '" width="' + bw + '" height="' + hh + '"/>';
+      y -= ph;
     }
     if (j % step === 0)
-      h += '<text class="ax" x="' + (x0 + inner / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + barLabel(bars[j].t, true) + '</text>';
+      h += '<text class="ax" x="' + (x0 + inner / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + barLabel(B.t, true) + '</text>';
     h += '<rect class="hit" x="' + (j * slot) + '" y="0" width="' + slot + '" height="' + H + '" onclick="stPick(' + j + ')"/>';
   }
   svg.innerHTML = h;
+  var pct = function (x, of) { return of > 0 ? Math.round(x / of * 100) : 0; };
   var tip = function (b) {
-    return "<b>" + barLabel(b.t, false) + "</b> — солнце " + kwh(b.p) + ", из сети " + kwh(b.g) + ", нагрузка " + kwh(b.l) + " кВт·ч" +
-           (b.d ? "" : " · данных не было");
+    var sum = (b.lp || 0) + (b.lb || 0) + (b.lg || 0), t = "<b>" + barLabel(b.t, false) + "</b> — нагрузка " + kwh(b.l) + " кВт·ч";
+    if (sum > 0) {
+      var ps = [];
+      for (var i = 0; i < 3; i++) { var x = b[MIX_PARTS[i][0]] || 0; if (x > 0) ps.push(MIX_PARTS[i][1] + " " + kwh(x) + " (" + pct(x, sum) + " %)"); }
+      t += ": " + ps.join(", ");
+      if (b.p > (b.lp || 0) + 50) t += "<br>солнце выработало всего " + kwh(b.p) + " — остальное ушло в батарею";
+    } else if (b.l > 0) t += " · состав не записывался (пишется с 24.10)";
+    if (!b.d) t += " · данных не было";
+    return t;
   };
-  $("st_tip").innerHTML = stSel >= 0 ? tip(bars[stSel]) : (max ? "нажмите на группу столбиков" : "за этот период пока пусто");
-  var rows = "<tr><td></td><td>солнце</td><td>сеть</td><td>нагрузка</td></tr>";
+  $("st_tip").innerHTML = stSel >= 0 ? tip(bars[stSel]) : (max ? "нажмите на пару столбиков" : "за этот период пока пусто");
+  var rows = "<tr><td></td><td>нагрузка</td><td>солнце</td><td>батарея</td><td>сеть</td></tr>";
   for (var r = n - 1; r >= 0; r--) {
-    var b = bars[r];
-    if (!b.d && !b.p && !b.g && !b.l) continue;
-    rows += "<tr><td>" + barLabel(b.t, false) + "</td><td>" + kwh(b.p) + "</td><td>" + kwh(b.g) + "</td><td>" + kwh(b.l) + "</td></tr>";
+    var b = bars[r], s2 = (b.lp || 0) + (b.lb || 0) + (b.lg || 0);
+    if (!b.d && !b.l) continue;
+    var cell = function (x) { return s2 > 0 ? kwh(x || 0) + ' <span class="sub">' + pct(x || 0, s2) + "%</span>" : "—"; };
+    rows += "<tr><td>" + barLabel(b.t, false) + "</td><td>" + kwh(b.l) + "</td><td>" + cell(b.lp) + "</td><td>" + cell(b.lb) + "</td><td>" + cell(b.lg) + "</td></tr>";
   }
   $("st_table").innerHTML = rows;
 }
