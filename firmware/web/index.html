@@ -288,6 +288,10 @@ svg.bars { display: block; width: 100%; height: 170px; }
 svg.bars .bar { fill: #4f8fe6; }
 svg.bars .bar.sel { fill: #8fbaf5; }
 svg.bars .hit { fill: transparent; }
+/* «Вместе»: три столбика в группе, цвета — как у графика мощностей за сутки. */
+svg.bars .gb { stroke: none; }
+svg.bars .gb.dim { opacity: .35; }
+svg.bars .gv { fill: #8a93a5; font-size: 12px; }
 svg.bars .ax { fill: #8a93a5; font-size: 10px; }
 svg.bars .gl { stroke: #262c38; stroke-width: 1; }
 #st_tip { min-height: 18px; margin: 6px 0 2px; font-size: 13px; color: #eef1f6; }
@@ -565,11 +569,15 @@ body.light pre.rep { background: #f2f4f8; }
   <div class="row"><div class="col c1"><div class="card">
     <h2 id="st_title">График</h2>
     <div class="tabs" id="st_metric">
-      <button onclick="stMetric('g')" id="sm_g">Сеть</button><button
+      <button onclick="stMetric('all')" id="sm_all">Вместе</button><button
+              onclick="stMetric('g')" id="sm_g">Сеть</button><button
               onclick="stMetric('l')" id="sm_l">Нагрузка</button><button
               onclick="stMetric('b')" id="sm_b">Батарея</button><button
               onclick="stMetric('p')" id="sm_p">Солнце</button><button
               onclick="stMetric('o')" id="sm_o">Без сети</button>
+    </div>
+    <div class="mx_leg hidden" id="st_leg" style="margin:4px 0 6px">
+      <span><b class="c-pv"></b>солнце</span><span><b class="c-grid"></b>из сети</span><span><b class="c-load"></b>нагрузка</span>
     </div>
     <div id="st_tip" class="sub">нажмите на столбик</div>
     <svg class="bars" id="st_svg" viewBox="0 0 400 170" preserveAspectRatio="none"></svg>
@@ -2184,7 +2192,8 @@ function pwDraw() {
 }
 
 /* ----------------------------------------- статистика */
-var stR = "day", stM = "l", stData = null, stSel = -1;
+var stR = "day", stM = "all", stData = null, stSel = -1;
+var ST_GROUP = [["p", "солнце", "c-pv"], ["g", "из сети", "c-grid"], ["l", "нагрузка", "c-load"]];
 var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
 function kwh(wh) {
@@ -2267,9 +2276,64 @@ function stShow() {
 }
 
 // Один ряд — одна метрика: без легенды, одним тоном, подпись — в заголовке.
+// Столбик со скруглённым верхом: низ стоит на оси.
+function stBar(cls, x, w, base, bh) {
+  var y = base - bh, r = Math.min(4, w / 2, bh);
+  return '<path class="' + cls + '" d="M' + x + ',' + base + 'V' + (y + r) + 'Q' + x + ',' + y + ' ' + (x + r) + ',' + y +
+         'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) + 'V' + base + 'Z"/>';
+}
+
+// «Вместе»: на каждый период — солнце, сеть, нагрузка рядом, одна ось кВт·ч.
+function stDrawGroup() {
+  var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
+  $("st_title").innerHTML = "Солнце, сеть и нагрузка, " + per;
+  var svg = $("st_svg"), s = stData;
+  if (!s || !s.bars) { svg.innerHTML = ""; $("st_table").innerHTML = ""; return; }
+  var bars = s.bars, n = bars.length, max = 0;
+  for (var k = 0; k < n; k++) for (var g = 0; g < 3; g++) max = Math.max(max, bars[k][ST_GROUP[g][0]] || 0);
+  var W = 400, H = 170, top = 12, bottom = 18, plot = H - top - bottom, base = top + plot;
+  var slot = W / n, gap = Math.max(1, Math.min(4, slot * 0.18)), inner = slot - gap;
+  var bw = Math.max(1, (inner - 2 * Math.min(1, inner * 0.06)) / 3), ig = (inner - bw * 3) / 2;
+  var h = "";
+  // Две линии сетки с подписью — чтобы высоту можно было прочитать.
+  for (var q = 1; q <= 2; q++) {
+    var gv = max * q / 2, gy = base - plot * q / 2;
+    h += '<line class="gl" x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '"/>' +
+         '<text class="gv" x="2" y="' + (gy - 2) + '">' + kwh(gv) + ' кВт·ч</text>';
+  }
+  h += '<line class="gl" x1="0" x2="' + W + '" y1="' + base + '" y2="' + base + '"/>';
+  var step = n > 12 ? Math.ceil(n / 8) : 1;
+  for (var j = 0; j < n; j++) {
+    var x0 = j * slot + gap / 2;
+    for (var g2 = 0; g2 < 3; g2++) {
+      var v = bars[j][ST_GROUP[g2][0]] || 0;
+      var bh = max ? Math.max(v ? 1.5 : 0, plot * v / max) : 0;
+      if (bh > 0) h += stBar("gb " + ST_GROUP[g2][2] + (stSel >= 0 && stSel !== j ? " dim" : ""), x0 + g2 * (bw + ig), bw, base, bh);
+    }
+    if (j % step === 0)
+      h += '<text class="ax" x="' + (x0 + inner / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + barLabel(bars[j].t, true) + '</text>';
+    h += '<rect class="hit" x="' + (j * slot) + '" y="0" width="' + slot + '" height="' + H + '" onclick="stPick(' + j + ')"/>';
+  }
+  svg.innerHTML = h;
+  var tip = function (b) {
+    return "<b>" + barLabel(b.t, false) + "</b> — солнце " + kwh(b.p) + ", из сети " + kwh(b.g) + ", нагрузка " + kwh(b.l) + " кВт·ч" +
+           (b.d ? "" : " · данных не было");
+  };
+  $("st_tip").innerHTML = stSel >= 0 ? tip(bars[stSel]) : (max ? "нажмите на группу столбиков" : "за этот период пока пусто");
+  var rows = "<tr><td></td><td>солнце</td><td>сеть</td><td>нагрузка</td></tr>";
+  for (var r = n - 1; r >= 0; r--) {
+    var b = bars[r];
+    if (!b.d && !b.p && !b.g && !b.l) continue;
+    rows += "<tr><td>" + barLabel(b.t, false) + "</td><td>" + kwh(b.p) + "</td><td>" + kwh(b.g) + "</td><td>" + kwh(b.l) + "</td></tr>";
+  }
+  $("st_table").innerHTML = rows;
+}
+
 function stDraw() {
-  var ms = ["g", "l", "b", "p", "o"];
+  var ms = ["all", "g", "l", "b", "p", "o"];
   for (var i = 0; i < ms.length; i++) $("sm_" + ms[i]).className = ms[i] === stM ? "on" : "";
+  show("st_leg", stM === "all");
+  if (stM === "all") { stDrawGroup(); return; }
   var names = { g: "Из сети", l: "Нагрузка", b: "Нагрузка от батареи", p: "Солнечные панели", o: "Без сети" };
   var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
   $("st_title").innerHTML = names[stM] + ", " + per;
