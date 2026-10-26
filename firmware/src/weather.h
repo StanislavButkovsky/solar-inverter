@@ -30,6 +30,7 @@ float  weatherPvKwh(int8_t day); // прогноз выработки: 0 — с�
 String weatherJson();            // для /api/state
 String weatherText();            // для бота: прогноз и автоматика
 bool   weatherChargeActive();    // ночная зарядка сейчас держит CHP = PNG
+void   weatherAutoReconsider();  // настройки ночной зарядки сменились — решить заново
 
 void   tlsLock();
 void   tlsUnlock();

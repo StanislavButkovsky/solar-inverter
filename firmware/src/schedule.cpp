@@ -16,8 +16,16 @@ struct Rule { uint8_t on, d, h, m, w, c; };
 static Rule    s_r[NRULE];
 static uint8_t s_n = 0;
 static int32_t s_fired[NRULE];                           // местные сутки, когда сработало
-static int8_t  s_pend = -1;                              // правило ждёт, пока инвертор освободится
-static uint32_t s_pendMs = 0;
+// Ждущие переключения (что, код): инвертор занят — повторяем до 5 минут.
+// Их бывает два: после сохранения расписания — и OPP, и CHP сразу.
+static int8_t  s_qW[2] = { -1, -1 }, s_qC[2];
+static uint32_t s_qMs[2];
+static volatile bool s_catchUp = false;                  // сохранили — применить то, что действует сейчас
+
+static void enqueue(uint8_t w, uint8_t c) {
+    for (uint8_t i = 0; i < 2; i++)
+        if (s_qW[i] < 0 || s_qW[i] == w) { s_qW[i] = w; s_qC[i] = c; s_qMs[i] = millis(); return; }
+}
 
 static const char* const NAME[2][3] = { { "GRD", "PU", "PBG" }, { "PV", "PNG", "OPV" } };
 
@@ -63,15 +71,50 @@ void schedLoop() {
     int32_t day = loc / 86400;
     uint8_t wd = (lt.tm_wday + 6) % 7;                   // пн = 0
 
-    // Ждущее правило: инвертор был занят — пробуем ещё, но не дольше 5 минут.
-    if (s_pend >= 0) {
-        const Rule& r = s_r[s_pend];
-        String e = invSetSetting(r.w, r.c);
-        if (e.isEmpty()) s_pend = -1;
-        else if (millis() - s_pendMs > 300000) {
-            tgNotify("⏰ Расписание: не удалось поставить " + String(r.w ? "CHP " : "OPP ") + NAME[r.w][r.c] + " — " + e);
-            s_pend = -1;
+    // Ждущие переключения: инвертор был занят — пробуем ещё, но не дольше 5 минут.
+    for (uint8_t i = 0; i < 2; i++) {
+        if (s_qW[i] < 0) continue;
+        String e = invSetSetting(s_qW[i], s_qC[i]);
+        if (e.isEmpty()) s_qW[i] = -1;
+        else if (millis() - s_qMs[i] > 300000) {
+            tgNotify("⏰ Расписание: не удалось поставить " + String(s_qW[i] ? "CHP " : "OPP ") + NAME[s_qW[i]][s_qC[i]] + " — " + e);
+            s_qW[i] = -1;
         }
+        return;                                           // одно переключение за раз
+    }
+
+    // Только что сохранили расписание: поставить то, что по нему действует
+    // сейчас — последнее прошедшее правило для OPP и для CHP. 25.10.2026
+    // расписание «22:00 GRD / 08:00 PBG» сохранили в 23:18, и до утра ничего не
+    // происходило: правило срабатывало только в свою минуту.
+    if (s_catchUp) {
+        s_catchUp = false;
+        int nowMin = lt.tm_hour * 60 + lt.tm_min;
+        InvState v = invSnapshot();
+        String said;
+        for (uint8_t w = 0; w < 2; w++) {
+            int best = -1, bestAgo = 1 << 30;
+            for (uint8_t i = 0; i < s_n; i++) {
+                const Rule& r = s_r[i];
+                if (!r.on || r.w != w) continue;
+                int rm = r.h * 60 + r.m;
+                for (int back = 0; back <= 7; back++) {
+                    uint8_t d = (wd + 7 - back) % 7;
+                    if (!(r.d >> d & 1) || (back == 0 && rm > nowMin)) continue;
+                    int ago = back * 1440 + nowMin - rm;
+                    if (ago < bestAgo) { bestAgo = ago; best = i; }
+                    break;
+                }
+            }
+            if (best < 0) continue;
+            const Rule& r = s_r[best];
+            if (w == 1 && weatherChargeActive()) { said += "\nCHP — не трогаю, идёт ночная зарядка"; continue; }
+            uint8_t now = w ? v.prioChg : v.prioOut;
+            if (v.fresh && now == r.c) { said += String("\n") + (w ? "CHP " : "OPP ") + NAME[w][r.c] + " — уже стоит"; continue; }
+            said += String("\n") + (w ? "CHP → " : "OPP → ") + NAME[w][r.c] + " (правило " + ruleText(r) + ")";
+            enqueue(w, r.c);
+        }
+        if (said.length()) tgNotify("⏰ Расписание сохранено, сейчас по нему:" + said);
         return;
     }
     for (uint8_t i = 0; i < s_n; i++) {
@@ -87,7 +130,7 @@ void schedLoop() {
         if (v.fresh && now == r.c) continue;              // уже стоит — молча
         tgNotify("⏰ По расписанию: " + String(r.w ? "CHP" : "OPP") + " → " + NAME[r.w][r.c]);
         String e = invSetSetting(r.w, r.c);
-        if (e.length()) { s_pend = i; s_pendMs = millis(); }
+        if (e.length()) enqueue(r.w, r.c);
         return;                                           // одно переключение за раз
     }
 }
@@ -131,7 +174,8 @@ String schedSave(const String& all) {
         gmtime_r(&loc, &lt);
         for (uint8_t i = 0; i < n; i++) if (s_r[i].h == lt.tm_hour && s_r[i].m == lt.tm_min) s_fired[i] = loc / 86400;
     }
-    s_pend = -1;
+    s_qW[0] = s_qW[1] = -1;
+    s_catchUp = true;
     save();
     return "";
 }

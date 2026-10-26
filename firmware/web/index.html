@@ -904,7 +904,8 @@ body.light pre.rep { background: #f2f4f8; }
         Каждое правило — одно переключение: в эти дни, в это время поставить режим.
         Интервал «с 7 до 9 — GRD» — два правила: в 7:00 GRD и в 9:00 обратно PBG.
         Пока ночная зарядка по прогнозу держит CHP, правила для CHP пропускаются.
-        О каждом срабатывании пишет бот.
+        После сохранения модуль сразу ставит то, что по расписанию действует
+        сейчас. О каждом срабатывании пишет бот.
       </div>
       <div id="sc_list"></div>
       <div style="margin-top:10px"><button onclick="scAdd()">Добавить правило</button></div>
@@ -1965,7 +1966,11 @@ function scAdd() {
 function scSave() {
   var r = scRules.map(function (x) { return [x.on, x.d, x.h, x.m, x.w, x.c].join("."); }).join(";");
   get("/api/sched?save=1&r=" + encodeURIComponent(r) + "&pass=" + encodeURIComponent($("sc_pass").value), function (res) {
-    if (res.ok) { scDirty = false; $("sc_msg").innerHTML = "сохранено"; scLoad(); }
+    if (res.ok) {
+      scDirty = false;
+      $("sc_msg").innerHTML = "сохранено — то, что по расписанию действует сейчас, модуль поставит в течение минуты (бот напишет, что именно)";
+      scLoad();
+    }
     else $("sc_msg").innerHTML = "не сохранено: " + (res.error || "?");
   }, function () { $("sc_msg").innerHTML = "модуль не ответил"; });
 }
@@ -2125,7 +2130,7 @@ function autoSave() {
     return k + "=" + encodeURIComponent($("au_" + k).value);
   }).join("&") + "&on=" + $("au_on").value + "&pass=" + encodeURIComponent($("au_pass").value);
   get("/api/auto?" + q, function (r) {
-    $("au_msg").innerHTML = r.ok ? "сохранено" : (r.error || "не вышло");
+    $("au_msg").innerHTML = r.ok ? "сохранено — если сейчас ночное окно, решение о зарядке будет пересмотрено в течение 10 с" : (r.error || "не вышло");
     if (r.ok) auFilled = false;
   }, function () { $("au_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }

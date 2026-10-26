@@ -517,6 +517,7 @@ void webStart() {
                 if (server.hasArg("on")) c.autoOn = server.arg("on") == "1";
                 cfgSave();
                 if (moved) weatherRefresh();
+                weatherAutoReconsider();
             }
         }
         server.send(200, "application/json; charset=utf-8",

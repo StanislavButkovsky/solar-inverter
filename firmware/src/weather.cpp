@@ -196,6 +196,11 @@ static void task(void*) {
 }
 
 void weatherRefresh() { s_refresh = true; }
+
+// Настройки ночной зарядки поменяли — решение на эту ночь принять заново
+// (в ближайшие 10 с, в weatherLoop). Раньше решение принималось раз за ночь,
+// и порог, поднятый после начала окна, до следующей ночи не действовал.
+void weatherAutoReconsider() { s_decided = -1; }
 bool weatherChargeActive() { return s_active; }
 
 // ------------------------------------------------------------------ прогноз
@@ -321,20 +326,36 @@ static void autoStep(int32_t day, int hour) {
         s_decided = night;
         autoSave();
         float fc = weatherPvKwh(off);
+        // Время и порог — в самом сообщении: 25.10.2026 решение «не заряжал»
+        // приняли в 22:00 при старом пороге, порог подняли в 23:18 — и по
+        // строке «по прогнозу 10,7 — не заряжал» понять это было нельзя.
+        char hm[8];
+        time_t loc = time(nullptr) + TZ_SEC;
+        struct tm lt;
+        gmtime_r(&loc, &lt);
+        snprintf(hm, sizeof(hm), "%02d:%02d", lt.tm_hour, lt.tm_min);
         String fcs = String(fc, 1) + " кВт·ч";
+        String head = String(hm) + " — прогноз " + fcs + ", порог " + String(cfg().autoBelow, 1);
         if (fc < 0) {
-            s_msg = "прогноза нет — ночную зарядку не включал";
+            s_msg = String(hm) + " — прогноза нет, ночную зарядку не включал";
             tgNotify("🌫 Прогноза выработки нет — ночную зарядку от сети не включаю. Проверьте координаты в настройках.");
         } else if (fc >= cfg().autoBelow) {
-            s_msg = "по прогнозу " + fcs + " — от сети не заряжал";
+            if (s_active) {                                   // пересмотр: заряд больше не нужен
+                s_active = false; autoSave(); want(0);
+                s_msg = head + " — заряд от сети остановил";
+                tgNotify("☀️ С новыми настройками заряжать от сети не нужно (прогноз " + fcs + ", порог " +
+                         String(cfg().autoBelow, 1) + ") — CHP → PV.");
+            } else s_msg = head + " — от сети не заряжал";
+        } else if (s_active) {
+            s_msg = head + " — заряжаю от сети";              // пересмотр: и так заряжаем
         } else if (!v.fresh || v.prioChg != 0) {
-            s_msg = "по прогнозу " + fcs + ", но CHP не PV — не трогал";
+            s_msg = head + ", но CHP не PV — не трогал";
             tgNotify("🌥 Завтра пасмурно (" + fcs + "), но CHP сейчас " +
                      String(v.prioChg == 1 ? "PNG" : v.prioChg == 2 ? "OPV" : "неизвестен") +
                      ", а не PV — ничего не меняю.");
         } else {
             s_active = true; autoSave(); want(1);
-            s_msg = "по прогнозу " + fcs + " — заряжал от сети";
+            s_msg = head + " — заряжаю от сети";
             tgNotify("🌥 Завтра пасмурно: по прогнозу " + fcs + " (порог " + String(cfg().autoBelow, 1) +
                      "). Ночью заряжаю батарею от сети: CHP → PNG, до " + String(t) + ":00 или до " +
                      String(cfg().autoSoc) + " %.");
