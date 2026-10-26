@@ -29,11 +29,15 @@ __attribute__((weak)) String invSettingsText() { return "У этого инве�
 __attribute__((weak)) String invSettingWrite(const String&, const String&) { return "этот инвертор переключать не умеет"; }
 __attribute__((weak)) String invSettingVerify(const String&, bool) { return "этот инвертор переключать не умеет"; }
 
+static volatile bool s_answered = true;
+
 void invOnBytes(const uint8_t* data, size_t n) {
     // Профиль сам решает, собрался ли ответ: у Modbus это длина и контрольная
     // сумма, у Voltronic — возврат каретки в конце строки.
-    if (invFeed(s_step, data, n))
+    if (invFeed(s_step, data, n)) {
         s_step = (s_step + 1) % INV_NSTEPS;
+        s_answered = true;
+    }
 }
 
 void invStart() {
@@ -66,6 +70,12 @@ void invTick() {
     if (millis() - s_lastPoll < POLL_MS) return;
     s_lastPoll = millis();
 
+#if !defined(TARGET_HS35)
+    // Блок не ответил до следующего опроса (регистров нет — исключение Modbus,
+    // или ответ потерялся) — идём дальше, иначе опрос встал бы на нём навсегда.
+    if (!s_answered) s_step = (s_step + 1) % INV_NSTEPS;
+    s_answered = false;
+#endif
     uint8_t req[32];
     size_t n = invBuildRequest(s_step, req, sizeof(req));
     invResetStream();

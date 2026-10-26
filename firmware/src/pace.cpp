@@ -573,7 +573,7 @@ String paceText() {
 
 #else
 void   paceStart() {}
-String paceJson() { return "{\"proto\":\"—\",\"status\":\"только в сборке HS35\",\"packs\":[],\"raw\":[]}"; }
+String paceJson() { return "{\"absent\":true,\"proto\":\"—\",\"status\":\"только в сборке HS35\",\"packs\":[],\"raw\":[]}"; }
 String paceText() { return "Ячейки читаются только в сборке HS35."; }
 String paceAlarm() { return ""; }
 #endif

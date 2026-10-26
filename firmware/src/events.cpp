@@ -78,19 +78,25 @@ const char* evText(EventKind k) {
     case EV_INV_DOWN:    return "связь с инвертором потеряна";
     case EV_INV_UP:      return "связь с инвертором установлена";
     case EV_INV_SET:     return "переключение настройки инвертора";
+    case EV_BATT_WARN:   return "батарея: предупреждение";
+    case EV_BATT_ALARM:  return "батарея: у порога защиты";
+    case EV_BATT_OK:     return "батарея: в норме";
+    case EV_BATT_FULL:   return "батарея полная — заряд сверен на 100 %";
+    case EV_BATT_EMPTY:  return "батарея разряжена до 0 % по напряжению";
     }
     return "событие";
 }
 
 EventLevel evLevel(EventKind k) {
     switch (k) {
-    case EV_FAULT_ON: case EV_INV_FAULT: case EV_GRID_LOST:
+    case EV_FAULT_ON: case EV_INV_FAULT: case EV_GRID_LOST: case EV_BATT_ALARM:
     case EV_CHG_BLOCKED: case EV_DSG_BLOCKED:
         return LV_ALARM;
-    case EV_BMS_DOWN: case EV_BMS_STALE: case EV_WIFI_DOWN: case EV_INV_DOWN:
+    case EV_BMS_DOWN: case EV_BMS_STALE: case EV_WIFI_DOWN: case EV_INV_DOWN: case EV_BATT_WARN:
+    case EV_BATT_EMPTY:
         return LV_WARN;
     case EV_BMS_UP: case EV_WIFI_UP: case EV_INV_UP: case EV_GRID_BACK:
-    case EV_FAULT_OFF: case EV_CHG_OK: case EV_DSG_OK:
+    case EV_FAULT_OFF: case EV_CHG_OK: case EV_DSG_OK: case EV_BATT_OK: case EV_BATT_FULL:
         return LV_GOOD;
     default:
         return LV_INFO;

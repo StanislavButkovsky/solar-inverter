@@ -372,10 +372,10 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Нагрузка</td><td id="i_load">—</td></tr>
           <tr><td>Солнечные панели</td><td id="i_pv">—</td></tr>
           <tr><td>Температура</td><td id="i_temp">—</td></tr>
-          <tr><td>Приоритет выхода</td><td id="i_po">—</td></tr>
+          <tr id="i_porow"><td>Приоритет выхода</td><td id="i_po">—</td></tr>
           <tr class="hidden" id="i_faultrow"><td id="i_faultk">Авария</td><td id="i_fault">—</td></tr>
-          <tr><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
-          <tr><td>Тип батареи</td><td id="i_bt">—</td></tr>
+          <tr id="i_pcrow"><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
+          <tr id="i_btrow"><td>Тип батареи</td><td id="i_bt">—</td></tr>
         </table>
       </div></div>
     </div>
@@ -426,6 +426,8 @@ body.light pre.rep { background: #f2f4f8; }
         <div class="track"><i id="socbar"></i></div>
         <div class="cap" id="soccap">заряд батареи</div>
         <div class="sub" id="soceta" style="margin-top:4px"></div>
+        <div class="sub hidden" id="socbms" style="margin-top:2px"></div>
+        <div id="battwarn" style="margin-top:8px"></div>
         <div style="margin-top:12px">
           <span class="chip gray" id="link" style="margin:0">нет связи</span>
           <span class="chip amber hidden" id="demo">демо-данные</span>
@@ -705,6 +707,36 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="batt">
     <div class="col c1"><div class="card">
+      <h2>Счёт заряда <span id="bs_chip" class="chip gray">—</span></h2>
+      <div class="sub" style="margin-bottom:8px">
+        Плата сама считает процент по току BMS от этой ёмкости: 100 % — когда средняя
+        ячейка дошла до «полной», 0 % — до «пустой». Процент самой BMS — рядом, для сравнения;
+        он считается от ёмкости, записанной в BMS. Пустая ёмкость — брать процент у BMS.
+      </div>
+      <table class="kv">
+        <tr><td>Сейчас</td><td id="bs_now">—</td></tr>
+        <tr><td>Измерено</td><td id="bs_meas">—</td></tr>
+      </table>
+      <label>Ёмкость, А·ч</label>
+      <input id="bs_cap" inputmode="decimal" placeholder="150">
+      <label>100 % — ячейка, В</label>
+      <input id="bs_full" inputmode="decimal" placeholder="4.05">
+      <label>0 % — ячейка, В (под нагрузкой)</label>
+      <input id="bs_empty" inputmode="decimal" placeholder="3.40">
+      <div style="margin-top:14px">
+        <button class="wide accent" onclick="bsSave()">Сохранить</button>
+      </div>
+      <div style="margin-top:8px">
+        <button class="wide" onclick="bsPct()">Выставить процент вручную…</button>
+      </div>
+      <div id="bs_msg" class="sub" style="margin-top:8px"></div>
+      <h2 style="margin-top:22px">Пороги BMS <span class="sub" style="text-transform:none;letter-spacing:0">только чтение</span></h2>
+      <div id="bs_lim" class="sub">не прочитаны — BMS ещё не на связи</div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="batt">
+    <div class="col c1"><div class="card" id="pdcard">
       <h2>BMS по RS485 <span id="pd_chip" class="chip gray">—</span></h2>
       <div class="sub" style="margin-bottom:8px">
         Ячейки, температуры и защиты — напрямую от BMS батарей, мимо инвертора.
@@ -1089,6 +1121,10 @@ try {
 } catch (e) { }
 function show(id, on) { $(id).className = $(id).className.replace(/ ?hidden/, "") + (on ? "" : " hidden"); }
 function fmt(x, n) { return (x === null || x === undefined) ? "—" : Number(x).toFixed(n); }
+function plural(n, one, few, many) {
+  var a = n % 100, b = n % 10;
+  return (a >= 11 && a <= 14) ? many : (b === 1 ? one : (b >= 2 && b <= 4 ? few : many));
+}
 function chip(id, cls, text) { $(id).className = "chip " + cls; $(id).innerHTML = text; }
 
 // Пока модуль сканирует эфир, он скачет по каналам, и HTTP-запрос с планшета
@@ -1138,7 +1174,7 @@ function setTab(t) {
   if (onSettings && history.replaceState) history.replaceState(null, "", "#settings/" + t);
   if (t === "inv") setTimeout(function () { isLoad(true); }, 0);
   if (t === "auto") setTimeout(scLoad, 0);
-  if (t === "batt") setTimeout(paceLoad, 0);
+  if (t === "batt") { setTimeout(paceLoad, 0); setTimeout(bsLoad, 0); }
   window.scrollTo(0, 0);
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
@@ -1298,6 +1334,8 @@ function renderInv(v, b) {
   $("sol_load").innerHTML = v.loadToday !== undefined ? v.loadToday.toFixed(2) + " кВт·ч" : "—";
   $("i_pc").innerHTML   = live ? (PRIO_CHG[v.prioChg] || "неизвестно") : "—";
   $("i_bt").innerHTML   = live ? (BATT_TYPE[v.battType] || "неизвестно") : "—";
+  // Инвертор, который их не отдаёт (первое устройство), — без пустых строк.
+  show("i_porow", v.prioOut !== 255); show("i_pcrow", v.prioChg !== 255); show("i_btrow", v.battType !== 255);
 }
 
 function render(s) {
@@ -1341,9 +1379,20 @@ function render(s) {
   // Прогноз — по среднему току за ~3 минуты, до порога «батарея разряжена»:
   // ниже него инвертор всё равно отключит нагрузку, считать до нуля — обман.
   var eta = "";
-  if (b.eta && l.fresh) eta = b.iAvg < 0 ? "хватит примерно на " + dur(b.eta) + " (до " + b.low + " %)"
+  if (b.eta && l.fresh) eta = b.iAvg < 0 ? "хватит примерно на " + dur(b.eta) + (b.low ? " (до " + b.low + " %)" : "")
                                          : "до полного примерно " + dur(b.eta);
   $("soceta").innerHTML = eta;
+  // Свой счёт платы — крупно; что думает сама BMS — строкой ниже.
+  var bl = [];
+  if (b.own && b.socBms >= 0) bl.push("BMS считает " + fmt(b.socBms, 1) + " %");
+  if (b.cycles) bl.push(b.cycles + " " + plural(b.cycles, "цикл", "цикла", "циклов"));
+  if (b.capAh) bl.push("ёмкость " + fmt(b.capAh, 0) + " А·ч");
+  $("socbms").innerHTML = bl.join(" · ");
+  show("socbms", bl.length > 0);
+  var wh = "";
+  for (var wi = 0; wi < (b.warn || []).length; wi++)
+    wh += '<div class="chip ' + (/защит|ниже нуля/.test(b.warn[wi]) ? "red" : "amber") + '" style="margin:4px 0 0;white-space:normal;text-align:left">' + b.warn[wi] + '</div><br>';
+  $("battwarn").innerHTML = wh;
   // на всякий случай: страница может открыться не с самого верха
   if (!b.cellCount && !socKnown) $("socbar").style.width = "0%";
 
@@ -1363,7 +1412,8 @@ function render(s) {
   $("curv").style.color = dircol;
   $("powv").style.color = dircol;
 
-  $("tmax").innerHTML   = b.tMin === b.tMax ? b.tMax : (b.tMin + "…" + b.tMax);
+  $("tmax").innerHTML   = (b.temps && b.temps.length > 1) ? b.temps.join(" · ")
+                        : (b.tMin === b.tMax ? b.tMax : (b.tMin + "…" + b.tMax));
   $("spread").innerHTML = b.spread;
   $("remain").innerHTML = fmt(kwh, 2);
   $("mos").innerHTML =
@@ -1638,8 +1688,70 @@ function saveIp() {
   get(u, function (r) { if (r.ok === false) $("ip_msg").innerHTML = r.error; else done(); }, done);
 }
 
+/* ----------------------------------------- свой счёт заряда */
+var bsFilled = false;
+function bsLoad() {
+  get("/api/bsoc", function (r) {
+    if (r.ok === false) return;
+    chip("bs_chip", r.on ? "green" : "gray", r.on ? "свой счёт" : "по BMS");
+    $("bs_now").innerHTML = r.on && r.ah >= 0
+        ? fmt(r.ah, 1) + " А·ч из " + fmt(r.cap, 0) + " (" + fmt(r.ah * 100 / r.cap, 1) + " %)" +
+          (r.anchor !== "none" ? '<br><span class="sub">от последней ' + (r.anchor === "full" ? "полной" : "пустой") +
+                                 " точки " + (r.since >= 0 ? "+" : "") + fmt(r.since, 1) + " А·ч</span>" : "")
+        : (r.on ? "ждёт ячеек от BMS" : "свой счёт выключен");
+    var m = r.meas || [];
+    $("bs_meas").innerHTML = m.length
+        ? m.map(function (x) { return fmt(x, 1); }).join(", ") + " А·ч" +
+          ' <a href="#" onclick="bsTake(' + m[m.length - 1] + ');return false">принять ' + fmt(m[m.length - 1], 0) + "</a>"
+        : '<span class="sub">ещё нет — нужен проход от полной до пустой или наоборот</span>';
+    if (!bsFilled) {
+      bsFilled = true;
+      $("bs_cap").value = r.cap ? r.cap : "";
+      $("bs_full").value = (r.full / 1000).toFixed(2);
+      $("bs_empty").value = (r.empty / 1000).toFixed(2);
+    }
+    var l = r.lim;
+    if (l) {
+      var mv = function (x) { return (x / 1000).toFixed(2) + " В"; };
+      $("bs_lim").innerHTML = '<table class="kv">' +
+        "<tr><td>Ячейка: перезаряд</td><td>предупр. " + mv(l.ovw) + " · защита " + mv(l.ovp) + "</td></tr>" +
+        "<tr><td>Ячейка: разряд</td><td>предупр. " + mv(l.uvw) + " · защита " + mv(l.uvp) + "</td></tr>" +
+        "<tr><td>Батарея: перезаряд</td><td>" + fmt(l.povw, 1) + " · " + fmt(l.povp, 1) + " В</td></tr>" +
+        "<tr><td>Батарея: разряд</td><td>" + fmt(l.puvw, 1) + " · " + fmt(l.puvp, 1) + " В</td></tr>" +
+        "<tr><td>Ток заряда</td><td>" + fmt(l.cw, 0) + " · " + fmt(l.cp, 0) + " А</td></tr>" +
+        "<tr><td>Ток разряда</td><td>" + fmt(l.dw, 0) + " · " + fmt(l.dp, 0) + " А</td></tr>" +
+        "<tr><td>Ёмкость в BMS</td><td>" + fmt(l.rated, 1) + " А·ч</td></tr></table>" +
+        (r.full && l.ovw && l.ovw < r.full
+          ? '<div class="sub" style="margin-top:6px">Предупреждение о перезаряде (' + mv(l.ovw) + ") ниже вашего 100 % (" +
+            mv(r.full) + "): BMS будет предупреждать на каждой полной зарядке. Поднять его можно в приложении DALY.</div>" : "") +
+        (r.on && Math.abs(l.rated - r.cap) > 1
+          ? '<div class="sub" style="margin-top:6px">В BMS записано ' + fmt(l.rated, 0) + " А·ч, здесь — " + fmt(r.cap, 0) +
+            ": процент BMS будет врать, пока не поправить ёмкость в приложении DALY.</div>" : "");
+    }
+  });
+}
+function bsSend(q) {
+  get("/api/bsoc?" + q + mp("mp_batt"), function (r) {
+    $("bs_msg").innerHTML = r.ok === false ? r.error : "сохранено";
+    if (r.ok !== false) { bsFilled = false; bsLoad(); }
+  }, function () { $("bs_msg").innerHTML = "модуль не ответил"; });
+}
+function bsSave() {
+  var n = function (id) { return parseFloat($(id).value.replace(",", ".")); };
+  var cap = $("bs_cap").value.trim() ? n("bs_cap") : 0;
+  bsSend("cap=" + cap + "&full=" + Math.round(n("bs_full") * 1000) + "&empty=" + Math.round(n("bs_empty") * 1000));
+}
+function bsTake(ah) { $("bs_cap").value = Math.round(ah); bsSave(); }
+function bsPct() {
+  var v = prompt("Сколько сейчас процентов? (например, 100 — если батарея только что полностью зарядилась)");
+  if (v === null) return;
+  bsSend("pct=" + parseFloat(v.replace(",", ".")));
+}
+
+var bsTick = 0;
 var busyRadio = false;
 function tick() {
+  if (onSettings && setTabNow === "batt" && ++bsTick % 10 === 0) bsLoad();
   if (theme === "clock") applyTheme();
   if (!busyRadio) get("/api/state", render);
 }
@@ -1763,6 +1875,8 @@ function paceLoad() {
 function paceRender() {
   var d = paceData;
   if (!d) return;
+  show("pdcard", !d.absent);                  // драйвер есть только в сборке HS35
+  if (d.absent) return;
   var n = d.packs.length, ok = 0;
   for (var k = 0; k < n; k++) if (d.packs[k].ok) ok++;
   // диагностика в настройках — всегда

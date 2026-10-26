@@ -8,6 +8,7 @@
 #include "inv.h"
 #include "net.h"
 #include "modbus.h"
+#include "battsoc.h"
 #include <NimBLEDevice.h>
 #include <time.h>
 #include <stdarg.h>
@@ -75,8 +76,8 @@ void dalyParseFrame(const uint8_t* f) {
         case 0x90:  // суммарное напряжение, ток, SOC
             s.voltage = be16(d + 0) * 0.1f;
             s.current = ((int32_t)be16(d + 4) - 30000) * 0.1f;
-            s.soc     = be16(d + 6) * 0.1f;
-            s.socKnown = true;
+            s.socBms  = be16(d + 6) * 0.1f;
+            if (!battSocOn()) { s.soc = s.socBms; s.socKnown = true; }
             break;
 
         case 0x91:  // максимальная и минимальная ячейка
@@ -98,7 +99,7 @@ void dalyParseFrame(const uint8_t* f) {
             s.chargeMos    = d[1] != 0;
             s.dischargeMos = d[2] != 0;
             s.bmsLife      = d[3];
-            s.remainingMah = be32(d + 4);
+            if (!battSocOn()) s.remainingMah = be32(d + 4);
             break;
 
         case 0x94:  // конфигурация
@@ -207,6 +208,47 @@ static size_t   s_d2Len = 0;
 static uint16_t s_d2Reg[80];
 static uint8_t  s_d2N = 0;
 static uint32_t s_d2Ms = 0;
+// Чтение произвольного диапазона по запросу (dalyD2Read).
+static volatile bool s_rdReq = false;
+static uint16_t      s_rdStart = 0, s_rdCount = 0;
+static uint16_t      s_rdReg[64];
+static uint8_t       s_rdN = 0;
+static uint16_t      s_rdFrom = 0;
+static bool          s_rdWait = false;
+static BmsLimits     s_lim;
+static portMUX_TYPE  s_limMux = portMUX_INITIALIZER_UNLOCKED;
+
+BmsLimits dalyLimits() {
+    portENTER_CRITICAL(&s_limMux);
+    BmsLimits l = s_lim;
+    portEXIT_CRITICAL(&s_limMux);
+    return l;
+}
+
+static void parseLimits(const uint16_t* r, uint8_t n) {   // r[0] — регистр 128
+    if (n < 37) return;
+    BmsLimits l;
+    l.have = true;
+    l.ratedAh = r[0] * 0.1f;
+    l.cellOvWarn = r[11]; l.cellOvProt = r[12];
+    l.cellUvWarn = r[13]; l.cellUvProt = r[14];
+    l.packOvWarn = r[15] * 0.1f; l.packOvProt = r[16] * 0.1f;
+    l.packUvWarn = r[17] * 0.1f; l.packUvProt = r[18] * 0.1f;
+    l.dsgWarnA = (30000 - (int32_t)r[19]) * 0.1f; l.dsgProtA = (30000 - (int32_t)r[20]) * 0.1f;
+    l.chgWarnA = ((int32_t)r[21] - 30000) * 0.1f; l.chgProtA = ((int32_t)r[22] - 30000) * 0.1f;
+    l.r164 = r[36];
+    l.ms = millis();
+    // Правдоподобие: перезаряд выше разряда и в пределах лития — иначе карта не та.
+    if (l.cellOvProt < 3000 || l.cellOvProt > 4500 || l.cellUvProt < 2000 || l.cellUvProt >= l.cellOvProt) {
+        bleLog("[ble] пороги BMS не похожи на правду (%u/%u мВ), не берём", l.cellOvProt, l.cellUvProt);
+        return;
+    }
+    portENTER_CRITICAL(&s_limMux);
+    s_lim = l;
+    portEXIT_CRITICAL(&s_limMux);
+    bleLog("[ble] пороги BMS: ячейка %u/%u…%u/%u мВ, ёмкость в BMS %.1f А·ч",
+           l.cellOvWarn, l.cellOvProt, l.cellUvWarn, l.cellUvProt, l.ratedAh);
+}
 
 // Карта D2 (новые DALY под приложением Smart BMS 4.x), сверена 26.10.2026 на
 // батарее DL-41190401535D (14S) с инвертором: 56,0 В против 55,9 у инвертора,
@@ -230,15 +272,17 @@ static void applyD2() {
         for (uint8_t i = 0; i < nt && i < MAX_TEMPS; i++) s.cellTemp[i] = r[32 + i] == 255 ? 0 : (int16_t)r[32 + i] - 40;
         s.voltage   = r[40] * 0.1f;
         s.current   = ((int32_t)r[41] - 30000) * 0.1f;
-        s.soc       = r[42] * 0.1f;
-        s.socKnown  = true;
+        s.socBms    = r[42] * 0.1f;
+        if (!battSocOn()) { s.soc = s.socBms; s.socKnown = true; }
         s.cellMaxMv = r[43];
         s.cellMinMv = r[44];
         s.tempMax   = (int16_t)r[45] - 40;
         s.tempMin   = (int16_t)r[46] - 40;
         s.chargeState  = r[47] <= 2 ? r[47] : 0;
-        s.remainingMah = (uint32_t)r[48] * 100;
-        if (s.soc > 5) s.capAh = r[48] * 0.1f * 100.0f / s.soc;
+        if (!battSocOn()) {
+            s.remainingMah = (uint32_t)r[48] * 100;
+            if (s.soc > 5) s.capAh = r[48] * 0.1f * 100.0f / s.soc;
+        }
         s.cycles       = r[51];
         s.chargeMos    = r[53] != 0;
         s.dischargeMos = r[54] != 0;
@@ -260,6 +304,19 @@ static void feedD2(const uint8_t* p, size_t n) {
     s_d2Len += n;
     size_t need = 3 + (size_t)s_d2[2] + 2;
     if (s_d2Len < need) return;
+    if (mbCrc16(s_d2, need - 2) == (uint16_t)(s_d2[need - 2] | (s_d2[need - 1] << 8)) && s_rdWait) {
+        // Ответ на ручное чтение: по длине отличаем от основного (62 рег.)
+        uint8_t n = s_d2[2] / 2;
+        if (n == s_rdCount) {
+            s_rdN = n > 64 ? 64 : n;
+            for (uint8_t i = 0; i < s_rdN; i++) s_rdReg[i] = (s_d2[3 + i * 2] << 8) | s_d2[4 + i * 2];
+            s_rdFrom = s_rdStart;
+            s_rdWait = false;
+            if (s_rdFrom == 128) parseLimits(s_rdReg, s_rdN);
+            s_d2Len = 0;
+            return;
+        }
+    }
     if (mbCrc16(s_d2, need - 2) == (uint16_t)(s_d2[need - 2] | (s_d2[need - 1] << 8))) {
         s_d2N = s_d2[2] / 2 > 80 ? 80 : s_d2[2] / 2;
         for (uint8_t i = 0; i < s_d2N; i++) s_d2Reg[i] = (s_d2[3 + i * 2] << 8) | s_d2[4 + i * 2];
@@ -269,6 +326,27 @@ static void feedD2(const uint8_t* p, size_t n) {
         bleLog("[ble] ответ D2 с неверной суммой, %u байт", (unsigned)s_d2Len);
     }
     s_d2Len = 0;
+}
+
+// Чтение произвольного диапазона по запросу из веба (только функция 03):
+// ищем, где у этой BMS лежат пороги защиты.
+
+void dalyD2Read(uint16_t start, uint16_t count) {
+    s_rdStart = start;
+    s_rdCount = count > 62 ? 62 : (count ? count : 1);
+    s_rdReq = true;
+}
+
+String dalyD2ReadReport() {
+    if (s_rdWait) return "жду ответа на чтение с " + String(s_rdStart) + "\n";
+    if (!s_rdN) return String();
+    String o = "чтение D2 с " + String(s_rdFrom) + " (0x" + String(s_rdFrom, HEX) + "), " + String(s_rdN) + " рег.:\n";
+    for (uint8_t i = 0; i < s_rdN; i++) {
+        char b[28];
+        snprintf(b, sizeof(b), "%4u: %5u%s", s_rdFrom + i, s_rdReg[i], (i % 6 == 5 || i == s_rdN - 1) ? "\n" : "   ");
+        o += b;
+    }
+    return o;
 }
 
 String dalyD2Report() {
@@ -613,6 +691,28 @@ static void dalyTask(void*) {
         if (proto != 2) {
             requestId(cycle[step]);
             step = (step + 1) % (sizeof(cycle) / sizeof(cycle[0]));
+        }
+        // Пороги защиты — при подключении и раз в 30 мин (их меняют в приложении).
+        if (proto == 2 && !s_rdReq && millis() - s_connAt > 5000) {
+            BmsLimits l = dalyLimits();
+            static uint32_t lastLimTry = 0;
+            if ((!l.have || millis() - l.ms > 1800000UL) && millis() - lastLimTry > 60000) {
+                lastLimTry = millis();
+                dalyD2Read(128, 41);
+            }
+        }
+        if (s_rdReq && s_txChar) {
+            s_rdReq = false;
+            s_rdWait = true;
+            s_rdN = 0;
+            uint8_t q[8];
+            mbBuildRead(q, 0xD2, s_rdStart, s_rdCount);
+            logHex("чтение D2 по запросу", q, 8);
+            s_txChar->writeValue(q, 8, !s_txChar->canWriteNoResponse());
+            lastD2 = millis();                 // основной опрос — не вперемешку
+            vTaskDelay(pdMS_TO_TICKS(800));
+            if (s_rdWait) { s_rdWait = false; bleLog("[ble] на чтение с %u ответа нет", s_rdStart); }
+            continue;
         }
         uint32_t d2Every = proto == 2 ? 2000 : 10000;
         if (proto != 1 && s_txChar && millis() - s_connAt > (proto == 2 ? 0u : 15000u) && millis() - lastD2 > d2Every) {

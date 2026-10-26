@@ -12,6 +12,7 @@
 #include "cfg.h"
 #include "net.h"
 #include "daly.h"
+#include "battsoc.h"
 #include "sim.h"
 #include "events.h"
 #include "inv.h"
@@ -71,6 +72,8 @@ static String jsonState() {
     j += ",\"remainAh\":" + String(s.remainingMah / 1000.0, 2);
     j += ",\"capAh\":" + String(s.capAh, 0);
     j += ",\"cycles\":" + String(s.cycles) + ",\"proto\":" + String(s.proto);
+    j += ",\"socBms\":" + String(s.socBms, 1) + ",\"own\":" + String(battSocOn() ? "true" : "false");
+    j += ",\"warn\":" + battWarnJson();
     j += ",\"temps\":[";
     for (uint8_t i = 0; i < s.tempCount && i < MAX_TEMPS; i++) j += (i ? "," : "") + String(s.cellTemp[i]);
     j += "]";
@@ -78,8 +81,10 @@ static String jsonState() {
     j += ",\"bFault\":" + String(s.bmsFault) + ",\"bWarn\":" + String(s.bmsWarn);
     float iAvg = statsBattAvgA();
     j += ",\"iAvg\":" + String(iAvg, 1);
-    j += ",\"eta\":" + String(s.socKnown ? battEtaS(s.soc, s.capAh, iAvg, cfg().tgSocLow) : 0);
-    j += ",\"low\":" + String(cfg().tgSocLow);
+    // Свой счёт: 0 % — уже «пустая» по напряжению под нагрузкой, считать до него.
+    uint8_t low = battSocOn() ? 0 : cfg().tgSocLow;
+    j += ",\"eta\":" + String(s.socKnown ? battEtaS(s.soc, s.capAh, iAvg, low) : 0);
+    j += ",\"low\":" + String(low);
 
     j += ",\"cells\":[";
     for (uint8_t i = 0; i < s.cellCount && i < MAX_CELLS; i++) {
@@ -648,7 +653,28 @@ void webStart() {
     // Журнал Bluetooth: поиски, кого услышали, подключения к батарее и донглу.
     server.on("/api/ble/log", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "text/plain; charset=utf-8", bleLogText() + "\n" + dalyD2Report());
+        server.send(200, "text/plain; charset=utf-8", bleLogText() + "\n" + dalyD2Report() + "\n" + dalyD2ReadReport());
+    });
+    // Свой счёт заряда: настройки, остаток, измерения ёмкости, пороги BMS.
+    server.on("/api/bsoc", HTTP_GET, []() {
+        String err;
+        if (server.hasArg("cap")) {
+            if (denied()) return;
+            err = battSocSet(server.arg("cap").toFloat(), server.arg("full").toInt(), server.arg("empty").toInt());
+        } else if (server.hasArg("pct")) {
+            if (denied()) return;
+            err = battSocSetPct(server.arg("pct").toFloat());
+        }
+        server.sendHeader("Cache-Control", "no-store");
+        if (err.length()) server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}");
+        else server.send(200, "application/json; charset=utf-8", battSocJson());
+    });
+
+    // Чтение регистров BMS по протоколу D2 — только чтение; итог — в /api/ble/log.
+    server.on("/api/ble/d2read", HTTP_GET, []() {
+        if (denied()) return;
+        dalyD2Read(server.arg("start").toInt(), server.arg("count").toInt());
+        server.send(200, "application/json", "{\"ok\":true}");
     });
 #endif
 

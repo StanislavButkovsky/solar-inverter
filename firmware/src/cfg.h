@@ -27,6 +27,11 @@ struct Config {
     float    autoBelow;   // «пасмурно» — прогноз выработки ниже, кВт·ч
     uint8_t  autoFrom, autoTo;  // ночное окно, часы местного времени
     uint8_t  autoSoc;     // зарядили до — возвращаем PV раньше конца окна, %
+
+    // Свой счёт заряда (battsoc.cpp). Ёмкость 0 — выключен, процент берётся у BMS.
+    float    bCapAh;      // ёмкость батареи, А·ч
+    uint16_t bFullMv;     // 100 % — средняя ячейка, мВ
+    uint16_t bEmptyMv;    // 0 % — средняя ячейка, мВ
 };
 
 void    cfgInit();

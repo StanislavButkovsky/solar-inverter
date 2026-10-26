@@ -26,6 +26,7 @@
 #include "weather.h"
 #include "schedule.h"
 #include "battlife.h"
+#include "battsoc.h"
 #include "pace.h"
 #if defined(USB_PROBE)
 #include "usb_probe.h"
@@ -87,6 +88,7 @@ void setup() {
     weatherStart();           // до бота: у них общий замок TLS
     schedStart();
     battStart();
+    battSocStart();
     paceStart();              // BMS батарей по RS485 (HS35), если подключена
     tgStart();
 #if defined(USB_PROBE)
@@ -114,5 +116,6 @@ void loop() {
     weatherLoop();
     schedLoop();
     battLoop();
+    battSocLoop();
     delay(2);
 }

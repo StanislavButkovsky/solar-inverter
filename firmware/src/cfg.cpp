@@ -30,6 +30,9 @@ void cfgInit() {
     g_cfg.autoFrom  = prefs.getUChar("autofrom", 23);
     g_cfg.autoTo    = prefs.getUChar("autoto", 7);
     g_cfg.autoSoc   = prefs.getUChar("autosoc", 95);
+    g_cfg.bCapAh    = prefs.getFloat("bcap", 0);
+    g_cfg.bFullMv   = prefs.getUShort("bfull", 4050);
+    g_cfg.bEmptyMv  = prefs.getUShort("bempty", 3400);
     if (g_cfg.pollMs < 100) g_cfg.pollMs = 100;
 }
 
@@ -60,6 +63,9 @@ void cfgSave() {
     prefs.putUChar("autofrom", g_cfg.autoFrom);
     prefs.putUChar("autoto", g_cfg.autoTo);
     prefs.putUChar("autosoc", g_cfg.autoSoc);
+    prefs.putFloat("bcap", g_cfg.bCapAh);
+    prefs.putUShort("bfull", g_cfg.bFullMv);
+    prefs.putUShort("bempty", g_cfg.bEmptyMv);
 }
 
 void cfgFactoryReset() {
@@ -68,4 +74,5 @@ void cfgFactoryReset() {
     g_cfg.pollMs = 300;
     g_cfg.tgSocLow = 20;
     g_cfg.autoBelow = 5; g_cfg.autoFrom = 23; g_cfg.autoTo = 7; g_cfg.autoSoc = 95;
+    g_cfg.bFullMv = 4050; g_cfg.bEmptyMv = 3400;
 }

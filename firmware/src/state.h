@@ -23,6 +23,8 @@ struct BmsState {
     float    current       = 0;      // А: + заряд, − разряд
     float    soc           = 0;      // %
     bool     socKnown      = false;  // false — источник процента не отдаёт (HS35 по USB)
+    float    socBms        = -1;     // процент, который считает сама BMS; −1 — нет
+                                     // (soc — свой счёт платы, если включён, battsoc.cpp)
 
     // --- 0x91 ---
     uint16_t cellMaxMv     = 0;
