@@ -85,26 +85,70 @@ static int parseArr(const String& b, int from, const char* key, float* out, int 
     return n;
 }
 
+// Серверы Open-Meteo с одним и тем же /v1/forecast. 26.10.2026 у владельца
+// первого устройства провайдер не пускал к api.open-meteo.com (157.90.83.168 —
+// соединение не устанавливается), а previous-runs-api и historical-forecast-api
+// на других адресах отвечали — и отдали тот же прогноз до часа. Цепочка у
+// всех трёх сходится к ISRG Root X1. Начинаем с последнего сработавшего.
+static const char* WX_HOSTS[] = { "api", "previous-runs-api", "historical-forecast-api" };
+static const uint8_t WX_NHOSTS = sizeof(WX_HOSTS) / sizeof(WX_HOSTS[0]);
+static uint8_t s_host = 0;
+
 static bool fetch() {
-    char url[220];
-    snprintf(url, sizeof(url),
-             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
-             "&hourly=shortwave_radiation&daily=shortwave_radiation_sum&timezone=Etc%%2FGMT-3&forecast_days=2",
-             cfg().lat, cfg().lon);
-    WiFiClientSecure cli;
-    cli.setCACert(TG_ROOT_CA);            // там же ISRG Root X1 — цепочка Open-Meteo, проверено 21.10.2026
-    HTTPClient http;
-    http.setConnectTimeout(8000);
-    http.setTimeout(15000);
     String body, err;
-    if (!http.begin(cli, url)) err = "не удалось начать запрос";
-    else {
-        int code = http.GET();
-        if (code == 200) body = http.getString();
-        else err = code > 0 ? "ответ " + String(code) : "нет связи с api.open-meteo.com (" + HTTPClient::errorToString(code) + ")";
-        http.end();
+    for (uint8_t k = 0; k < WX_NHOSTS; k++) {
+        uint8_t hi = (s_host + k) % WX_NHOSTS;
+        char url[240];
+#if defined(WX_PLAIN_HTTP)
+        // Без TLS: у первого устройства (два соединения Bluetooth) 26.10.2026
+        // рукопожатию не хватало памяти — «SSL - Memory allocation failed» при
+        // крупнейшем куске 24 КБ. Прогноз — открытые данные без токена, а в
+        // инвертор эта плата ничего не пишет: подменённый ответ ничего не переключит.
+        const char* scheme = "http";
+        WiFiClient cli;
+#else
+        const char* scheme = "https";
+        WiFiClientSecure cli;
+        cli.setCACert(TG_ROOT_CA);        // там же ISRG Root X1 — цепочка Open-Meteo, проверено 21.10.2026
+#endif
+        snprintf(url, sizeof(url),
+                 "%s://%s.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+                 "&hourly=shortwave_radiation&daily=shortwave_radiation_sum&timezone=Etc%%2FGMT-3&forecast_days=2",
+                 scheme, WX_HOSTS[hi], cfg().lat, cfg().lon);
+        HTTPClient http;
+        http.setConnectTimeout(8000);
+        http.setTimeout(15000);
+        body = ""; err = "";
+        bool conn = false;                // до сервера дошли — другой пробовать незачем
+        if (!http.begin(cli, url)) err = "не удалось начать запрос";
+        else {
+            int code = http.GET();
+            conn = code > 0;
+            if (code == 200) body = http.getString();
+            else if (code > 0) err = "ответ " + String(code) + " от " + WX_HOSTS[hi] + ".open-meteo.com";
+            else {
+                // «connection refused» у HTTPClient — и TCP, и провал TLS: причину
+                // говорит только сам клиент (mbedTLS), и с ней же — свободная память.
+                char tls[80] = "";
+#if defined(WX_PLAIN_HTTP)
+                int te = 0;
+#else
+                int te = cli.lastError(tls, sizeof(tls));
+#endif
+                err = "нет связи с " + String(WX_HOSTS[hi]) + ".open-meteo.com (" + HTTPClient::errorToString(code) +
+                      (te ? String(", TLS ") + te + ": " + tls : String("")) +
+                      ", память " + String(ESP.getMaxAllocHeap() / 1024) + " КБ)";
+            }
+            http.end();
+        }
+        cli.stop();
+        if (err.isEmpty() || conn) {
+            if (err.isEmpty() && hi != s_host) Serial.printf("[wx] прогноз берётся с %s.open-meteo.com\n", WX_HOSTS[hi]);
+            if (err.isEmpty()) s_host = hi;
+            break;
+        }
+        Serial.printf("[wx] %s\n", err.c_str());
     }
-    cli.stop();
 
     int16_t rad[48];
     float sum[2] = { -1, -1 };
