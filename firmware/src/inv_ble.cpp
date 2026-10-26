@@ -12,6 +12,7 @@
 #include "inv_transport.h"
 #include "cfg.h"
 #include <NimBLEDevice.h>
+#include "daly.h"
 
 static const NimBLEUUID SVC_UUID("53300000-0023-4bd4-bbd5-a6920e4c5653");
 static const NimBLEUUID CHR_WRITE("53300001-0023-4bd4-bbd5-a6920e4c5653");
@@ -30,7 +31,7 @@ class InvCb : public NimBLEClientCallbacks {
     void onDisconnect(NimBLEClient*, int) override {
         s_connected = false;
         s_tx = nullptr;
-        Serial.println("[инв] соединение потеряно");
+        bleLog("[инв] соединение потеряно");
     }
 };
 
@@ -60,40 +61,51 @@ bool invTrConnect() {
 
     bool found = false;
     NimBLEAddress addr;
+    int rssi = 0;
+    bool conn = false;
     for (int i = 0; i < (int)res.getCount(); i++) {
         const NimBLEAdvertisedDevice* d = res.getDevice(i);
         String mac = String(d->getAddress().toString().c_str());
         mac.toLowerCase();
-        if (mac == want) { addr = d->getAddress(); found = true; break; }
+        if (mac == want) { addr = d->getAddress(); rssi = d->getRSSI(); conn = d->isConnectable(); found = true; break; }
     }
+    int heard = res.getCount();
     scan->clearResults();
-    if (!found) return false;
+    if (!found) { bleLog("[инв] донгл %s в эфире не найден (услышано %d)", want.c_str(), heard); return false; }
 
     if (!s_client) {
         s_client = NimBLEDevice::createClient();
         s_client->setClientCallbacks(new InvCb(), false);
         s_client->setConnectionParams(24, 40, 0, 200);
-        s_client->setConnectTimeout(10);
+        // NimBLE 2.x — миллисекунды (в 1.x были секунды): «10» давало 10 мс,
+        // и подключение 26.10.2026 обрывалось таймаутом (код 13) мгновенно.
+        s_client->setConnectTimeout(10000);
     }
 
-    Serial.printf("[инв] подключаюсь к донглу %s\n", want.c_str());
-    if (!s_client->connect(addr)) return false;
+    bleLog("[инв] подключаюсь к донглу %s (%d дБм, %s)", want.c_str(), rssi,
+           conn ? "принимает подключения" : "реклама без подключений — слот, видимо, занят");
+    if (!s_client->connect(addr)) {
+        bleLog("[инв] подключиться не удалось, код NimBLE %d", s_client->getLastError());
+        return false;
+    }
 
     NimBLERemoteService* svc = s_client->getService(SVC_UUID);
     if (!svc) {
-        Serial.println("[инв] нет сервиса 5330…, это не донгл Eybond");
+        String list;
+        for (NimBLERemoteService* x : s_client->getServices(true)) list += String(x->getUUID().toString().c_str()) + " ";
+        bleLog("[инв] нет сервиса 5330…, это не донгл Eybond; сервисы: %s", list.c_str());
         s_client->disconnect();
         return false;
     }
     NimBLERemoteCharacteristic* rx = svc->getCharacteristic(CHR_NOTIFY);
     s_tx = svc->getCharacteristic(CHR_WRITE);
     if (!rx || !s_tx || !rx->subscribe(true, onNotify)) {
-        Serial.println("[инв] характеристики не нашлись или подписка не прошла");
+        bleLog("[инв] характеристики не нашлись или подписка не прошла");
         s_client->disconnect();
         return false;
     }
 
-    Serial.println("[инв] подключено");
+    bleLog("[инв] подключено");
     return true;
 }
 
@@ -105,7 +117,7 @@ void invTrSend(const uint8_t* frame, size_t n) {
 void invBind(const String& mac) {
     cfg().invMac = mac;
     cfgSave();
-    Serial.printf("[инв] привязан донгл %s\n", mac.c_str());
+    bleLog("[инв] привязан донгл %s", mac.c_str());
     if (s_client && s_client->isConnected()) s_client->disconnect();
 }
 

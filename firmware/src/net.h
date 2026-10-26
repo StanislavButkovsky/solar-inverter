@@ -19,3 +19,8 @@ String netScanJson();
 // Пустая строка — принято, иначе — что не так.
 String netSetStatic(const String& ip, const String& gw, const String& mask, const String& dns);
 String netAddrJson();      // {"static":…,"ip","gw","mask","dns"} — для страницы
+
+// Сон Wi-Fi: включить/выключить сразу и запомнить. Возвращает режим, который
+// драйвер реально поставил: none, min_modem, max_modem.
+String netSetSleep(bool on);
+String netSleepState();

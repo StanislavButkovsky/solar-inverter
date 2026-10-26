@@ -2,6 +2,7 @@
 #include "net.h"
 #include "cfg.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <ESPmDNS.h>
 #include "events.h"
 
@@ -179,7 +180,10 @@ static void apEvents(arduino_event_id_t ev, arduino_event_info_t info) {
 void netStart() {
     WiFi.onEvent(apEvents);
     WiFi.persistent(false);
-    WiFi.setSleep(false);          // сон Wi-Fi мешает совместной работе с BLE
+    // Сон Wi-Fi (modem sleep). Был выключен всегда с пометкой «мешает
+    // совместной работе с BLE»; 26.10.2026 поиск у самой батареи слышал одно
+    // устройство на весь эфир — проверяем обратное, переключателем.
+    WiFi.setSleep(cfg().wifiSleep);
 
     if (cfg().ssid.isEmpty()) {
         Serial.println("[net] сеть не задана");
@@ -416,4 +420,19 @@ String netStatus() {
         return s;
     }
     return "нет связи";
+}
+
+String netSetSleep(bool on) {
+    cfg().wifiSleep = on;
+    cfgSave();
+    WiFi.setSleep(on);
+    wifi_ps_type_t ps = WIFI_PS_NONE;
+    esp_wifi_get_ps(&ps);
+    return ps == WIFI_PS_NONE ? "none" : ps == WIFI_PS_MIN_MODEM ? "min_modem" : "max_modem";
+}
+
+String netSleepState() {
+    wifi_ps_type_t ps = WIFI_PS_NONE;
+    esp_wifi_get_ps(&ps);
+    return ps == WIFI_PS_NONE ? "none" : ps == WIFI_PS_MIN_MODEM ? "min_modem" : "max_modem";
 }

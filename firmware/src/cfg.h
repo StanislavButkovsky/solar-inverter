@@ -8,6 +8,7 @@ struct Config {
     // Свой адрес в сети вместо выданного DHCP. Пустой sip — DHCP. Проверяет
     // и применяет net.cpp (netSetStatic), пустой sdns — DNS шлюза.
     String  sip, sgw, smask, sdns;
+    bool    wifiSleep;   // сон Wi-Fi (modem sleep); /api/wifi/sleep, см. net.cpp
     String  bmsMac;     // "aa:bb:cc:dd:ee:ff", пусто = искать по имени/сервису
     String  invMac;      // донгл инвертора Eybond; пусто = не опрашивать
     String  webPass;     // пароль на запись; пусто = запись запрещена вовсе

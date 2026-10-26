@@ -224,6 +224,16 @@ void webStart() {
         server.send(200, "application/json", "{\"ok\":true}");
     });
 
+    // Сон Wi-Fi — проверка совместной работы с Bluetooth. Без on — только узнать.
+    server.on("/api/wifi/sleep", HTTP_GET, []() {
+        String ps = netSleepState();
+        if (server.hasArg("on")) {
+            if (denied()) return;
+            ps = netSetSleep(server.arg("on") == "1");
+        }
+        server.send(200, "application/json", "{\"ok\":true,\"ps\":\"" + ps + "\"}");
+    });
+
     server.on("/api/wifi/found", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
         server.send(200, "application/json; charset=utf-8", netScanJson());
@@ -630,6 +640,14 @@ void webStart() {
     });
 
     // Журнал обмена с инвертором и что профиль о нём узнал — текстом, для разбора.
+#if !defined(NO_BLE)
+    // Журнал Bluetooth: поиски, кого услышали, подключения к батарее и донглу.
+    server.on("/api/ble/log", HTTP_GET, []() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "text/plain; charset=utf-8", bleLogText());
+    });
+#endif
+
     server.on("/api/inv", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
         server.send(200, "text/plain; charset=utf-8", invProfileReport() + "\n--- обмен ---\n" + invTrace());

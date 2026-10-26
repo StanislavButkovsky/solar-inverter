@@ -12,6 +12,7 @@ void cfgInit() {
     g_cfg.sgw    = prefs.getString("sgw", "");
     g_cfg.smask  = prefs.getString("smask", "");
     g_cfg.sdns   = prefs.getString("sdns", "");
+    g_cfg.wifiSleep = prefs.getBool("wsleep", false);
     g_cfg.bmsMac = prefs.getString("bmsmac", "");
     g_cfg.invMac = prefs.getString("invmac", "");
     g_cfg.webPass= prefs.getString("webpass", "");
@@ -41,6 +42,7 @@ void cfgSave() {
     prefs.putString("sgw",    g_cfg.sgw);
     prefs.putString("smask",  g_cfg.smask);
     prefs.putString("sdns",   g_cfg.sdns);
+    prefs.putBool("wsleep",   g_cfg.wifiSleep);
     prefs.putString("bmsmac", g_cfg.bmsMac);
     prefs.putString("invmac", g_cfg.invMac);
     prefs.putString("webpass",g_cfg.webPass);

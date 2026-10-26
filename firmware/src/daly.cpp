@@ -8,6 +8,8 @@
 #include "inv.h"
 #include "net.h"
 #include <NimBLEDevice.h>
+#include <time.h>
+#include <stdarg.h>
 
 static const NimBLEUUID SVC_UUID((uint16_t)0xFFF0);
 static const NimBLEUUID CHR_NOTIFY((uint16_t)0xFFF1);
@@ -200,10 +202,83 @@ class ClientCB : public NimBLEClientCallbacks {
             s.fresh  = false;
             s.disconnects++;
         });
-        Serial.println("[ble] соединение потеряно");
+        bleLog("[ble] соединение потеряно");
         evAdd(EV_BMS_DOWN);
     }
 };
+
+// Кольцо — статическое, не в куче: 26.10.2026 кольцо из String съело ~12 КБ
+// и обновление по сети упало на нехватке памяти (минимум свободной — 4 КБ).
+static const uint8_t BLE_LOG_N = 40, BLE_LOG_W = 176;   // русская буква — 2 байта
+static char          s_log[BLE_LOG_N][BLE_LOG_W];
+static uint8_t       s_logHead = 0, s_logCnt = 0;
+static portMUX_TYPE  s_logMux = portMUX_INITIALIZER_UNLOCKED;
+
+void bleLog(const char* fmt, ...) {
+    char b[BLE_LOG_W - 10];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b, sizeof(b), fmt, ap);
+    va_end(ap);
+    Serial.println(b);
+    char t[10];
+    time_t now = time(nullptr);
+    if (now > 1700000000) {                       // время есть — местное
+        now += 3 * 3600;
+        struct tm lt;
+        gmtime_r(&now, &lt);
+        snprintf(t, sizeof(t), "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
+    } else {
+        snprintf(t, sizeof(t), "+%lus", (unsigned long)(millis() / 1000));
+    }
+    char line[BLE_LOG_W];
+    snprintf(line, sizeof(line), "%s %s", t, b);
+    portENTER_CRITICAL(&s_logMux);
+    memcpy(s_log[s_logHead], line, BLE_LOG_W);
+    s_logHead = (s_logHead + 1) % BLE_LOG_N;
+    if (s_logCnt < BLE_LOG_N) s_logCnt++;
+    portEXIT_CRITICAL(&s_logMux);
+}
+
+String bleLogText() {
+    String out;
+    out.reserve(BLE_LOG_N * 70);
+    char line[BLE_LOG_W];
+    for (uint8_t i = 0; i < BLE_LOG_N; i++) {
+        portENTER_CRITICAL(&s_logMux);
+        bool have = i < s_logCnt;
+        if (have) memcpy(line, s_log[(s_logHead + BLE_LOG_N - s_logCnt + i) % BLE_LOG_N], BLE_LOG_W);
+        portEXIT_CRITICAL(&s_logMux);
+        if (!have) break;
+        line[BLE_LOG_W - 1] = 0;
+        out += line;
+        out += "\n";
+    }
+    return out;
+}
+
+// Итог поиска одной строкой: сколько услышали и кого громче всех. «Слышим
+// одно устройство на весь дом» и «слышим двадцать, но не батарею» — разные беды.
+static void logScan(const char* what, const NimBLEScanResults& res, int hit) {
+    String top;
+    int n = res.getCount();
+    bool used[64] = {false};
+    for (int k = 0; k < 3 && k < n; k++) {
+        int best = -1;
+        for (int i = 0; i < n && i < 64; i++)
+            if (!used[i] && (best < 0 || res.getDevice(i)->getRSSI() > res.getDevice(best)->getRSSI())) best = i;
+        if (best < 0) break;
+        used[best] = true;
+        const NimBLEAdvertisedDevice* d = res.getDevice(best);
+        String nm = String(d->getName().c_str());
+        if (nm.length() > 14) nm = nm.substring(0, 14);
+        top += String(k ? ", " : "") + (nm.length() ? nm : String(d->getAddress().toString().c_str())) +
+               " " + String(d->getRSSI());
+    }
+    bleLog("[ble] %s: услышано %d%s%s", what, n,
+           hit >= 0 ? ", нужное найдено" : ", нужного нет",
+           n ? (String("; громче всех: ") + top).c_str() : "");
+}
 
 static bool looksLikeDaly(const NimBLEAdvertisedDevice* d) {
     if (d->isAdvertisingService(SVC_UUID)) return true;
@@ -224,6 +299,7 @@ std::vector<BleFound> dalyScan(uint8_t seconds) {
     // модуль — эфир делим: Bluetooth слушает четверть времени.
     scan->setWindow(netApActive() ? 25 : 99);
     NimBLEScanResults res = scan->getResults(seconds * 1000, false);
+    logScan("поиск по запросу", res, -1);
     for (int i = 0; i < (int)res.getCount(); i++) {
         const NimBLEAdvertisedDevice* d = res.getDevice(i);
         BleFound f;
@@ -246,10 +322,11 @@ static bool findTarget(uint8_t seconds) {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setActiveScan(true);
     scan->setInterval(100);
-    scan->setWindow(99);
+    scan->setWindow(netApActive() ? 25 : 99);     // см. dalyScan()
     NimBLEScanResults res = scan->getResults(seconds * 1000, false);
 
     s_haveTarget = false;
+    int hitIdx = -1;
     for (int i = 0; i < (int)res.getCount(); i++) {
         const NimBLEAdvertisedDevice* d = res.getDevice(i);
         String mac = String(d->getAddress().toString().c_str());
@@ -260,8 +337,10 @@ static bool findTarget(uint8_t seconds) {
         s_targetName = String(d->getName().c_str());
         s_targetRssi = d->getRSSI();
         s_haveTarget = true;
+        hitIdx = i;
         break;
     }
+    logScan(want.length() ? "поиск батареи по адресу" : "поиск батареи DALY", res, hitIdx);
     scan->clearResults();
     return s_haveTarget;
 }
@@ -273,20 +352,22 @@ static bool connectTarget() {
         s_client = NimBLEDevice::createClient();
         s_client->setClientCallbacks(new ClientCB(), false);
         s_client->setConnectionParams(24, 40, 0, 200);
-        s_client->setConnectTimeout(10);
+        // NimBLE 2.x — миллисекунды (в 1.x были секунды): «10» давало 10 мс,
+        // и подключение 26.10.2026 обрывалось таймаутом (код 13) мгновенно.
+        s_client->setConnectTimeout(10000);
     }
 
-    Serial.printf("[ble] подключаюсь к %s (%s)\n",
+    bleLog("[ble] подключаюсь к %s (%s)",
                   s_targetAddr.toString().c_str(), s_targetName.c_str());
 
     if (!s_client->connect(s_targetAddr)) {
-        Serial.println("[ble] подключиться не удалось");
+        bleLog("[ble] подключиться не удалось, код NimBLE %d", s_client->getLastError());
         return false;
     }
 
     NimBLERemoteService* svc = s_client->getService(SVC_UUID);
     if (!svc) {
-        Serial.println("[ble] нет сервиса FFF0 — это не DALY либо другой донгл");
+        bleLog("[ble] нет сервиса FFF0 — это не DALY либо другой донгл");
         s_client->disconnect();
         return false;
     }
@@ -294,12 +375,12 @@ static bool connectTarget() {
     NimBLERemoteCharacteristic* rx = svc->getCharacteristic(CHR_NOTIFY);
     s_txChar = svc->getCharacteristic(CHR_WRITE);
     if (!rx || !s_txChar) {
-        Serial.println("[ble] нет характеристик FFF1/FFF2");
+        bleLog("[ble] нет характеристик FFF1/FFF2");
         s_client->disconnect();
         return false;
     }
     if (!rx->subscribe(true, notifyCB)) {
-        Serial.println("[ble] подписка на уведомления не прошла");
+        bleLog("[ble] подписка на уведомления не прошла");
         s_client->disconnect();
         return false;
     }
@@ -313,7 +394,7 @@ static bool connectTarget() {
         s.rssi = rssi;
     });
 
-    Serial.println("[ble] подключено, подписка активна");
+    bleLog("[ble] подключено, подписка активна");
     evAdd(EV_BMS_UP, s_targetAddr.toString().c_str());
     return true;
 }
@@ -342,8 +423,8 @@ std::vector<BleFound> dalyScanResults() {
 void dalyBind(const String& mac) {
     cfg().bmsMac = mac;
     cfgSave();
-    Serial.printf("[ble] привязана батарея %s\n", mac.c_str());
-    if (!s_ble) Serial.println("[ble] Bluetooth на этой загрузке выключен — включится после перезагрузки");
+    bleLog("[ble] привязана батарея %s", mac.c_str());
+    if (!s_ble) bleLog("[ble] Bluetooth на этой загрузке выключен — включится после перезагрузки");
     if (s_client && s_client->isConnected()) s_client->disconnect();
     s_haveTarget = false;
 }
@@ -372,21 +453,21 @@ static void dalyTask(void*) {
         if (s_scanReq) {
             s_scanReq  = false;
             s_scanBusy = true;
-            Serial.println("[ble] поиск по запросу из веба");
+            bleLog("[ble] поиск по запросу из веба");
             std::vector<BleFound> found = dalyScan(5);
             if (s_scanMtx && xSemaphoreTake(s_scanMtx, pdMS_TO_TICKS(500)) == pdTRUE) {
                 s_scanRes = found;
                 xSemaphoreGive(s_scanMtx);
             }
             s_scanBusy = false;
-            Serial.printf("[ble] найдено устройств: %u\n", (unsigned)found.size());
+            bleLog("[ble] найдено устройств: %u", (unsigned)found.size());
             continue;
         }
 
         // Пауза по требованию: батарея отдана официальному приложению.
         if (s_releaseUntil && (int32_t)(millis() - s_releaseUntil) < 0) {
             if (s_client && s_client->isConnected()) {
-                Serial.println("[ble] отпускаю батарею приложению");
+                bleLog("[ble] отпускаю батарею приложению");
                 s_client->disconnect();
             }
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -394,7 +475,7 @@ static void dalyTask(void*) {
         }
         if (s_releaseUntil && (int32_t)(millis() - s_releaseUntil) >= 0) {
             s_releaseUntil = 0;
-            Serial.println("[ble] пауза кончилась, возвращаюсь к опросу");
+            bleLog("[ble] пауза кончилась, возвращаюсь к опросу");
         }
 
         if (!s_connected) {
@@ -412,7 +493,7 @@ static void dalyTask(void*) {
                 if (findTarget(5)) {
                     if (!connectTarget()) vTaskDelay(pdMS_TO_TICKS(2000));
                 } else {
-                    Serial.println("[ble] батарея не найдена в эфире");
+                    // итог поиска уже в журнале (logScan)
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(200));
