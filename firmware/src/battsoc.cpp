@@ -113,14 +113,18 @@ static void warnLoop(const BmsState& b, float avgMv) {
         snprintf(t, sizeof(t), "ячейка %.3f В — у защиты от перезаряда %.2f В", b.cellMaxMv / 1000.0f, ovp / 1000.0f);
         warnSet(0, b.cellMaxMv >= ovp - 20, true, t, 5, 60);
     }
+    // «100 %» и «0 %» — пороги своего счёта (по умолчанию под Li-ion первого
+    // устройства). Без него не проверять: у LiFePO4 HS35 ячейки ~3,3 В, и
+    // «0 % при 3,40 В» горело бы всегда, как только ячейки придут по RS485.
+    bool own = battSocOn();
     snprintf(t, sizeof(t), "ячейка %.3f В — выше 100 %% (%.2f В)", b.cellMaxMv / 1000.0f, cfg().bFullMv / 1000.0f);
-    warnSet(1, b.cellMaxMv > cfg().bFullMv + 20, false, t, 30, 120);
+    warnSet(1, own && b.cellMaxMv > cfg().bFullMv + 20, false, t, 30, 120);
     if (uvp) {
         snprintf(t, sizeof(t), "ячейка %.3f В — у защиты от разряда %.2f В", b.cellMinMv / 1000.0f, uvp / 1000.0f);
         warnSet(2, b.cellMinMv && b.cellMinMv <= uvp + 100, true, t, 5, 60);
     }
     snprintf(t, sizeof(t), "ячейка %.3f В — батарея на 0 %% (%.2f В)", b.cellMinMv / 1000.0f, cfg().bEmptyMv / 1000.0f);
-    warnSet(3, b.cellMinMv && b.cellMinMv <= cfg().bEmptyMv, false, t, 30, 120);
+    warnSet(3, own && b.cellMinMv && b.cellMinMv <= cfg().bEmptyMv, false, t, 30, 120);
     snprintf(t, sizeof(t), "разброс ячеек %u мВ (больше %u)", b.spreadMv(), spreadMax);
     warnSet(4, b.spreadMv() > spreadMax, false, t, 600, 300);
     snprintf(t, sizeof(t), "заряд при %d °C — %s", b.tempMin, b.tempMin < 0 ? "ниже нуля литий заряжать нельзя" : "холодно, лучше 3,95 В на ячейку");
