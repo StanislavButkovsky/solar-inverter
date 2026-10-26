@@ -142,7 +142,32 @@ static void dropAp() {
     Serial.println("[net] точка доступа выключена, работаю клиентом");
 }
 
+// Кто приходит на точку доступа и почему уходит. Без этого «телефон не
+// подключается» не отличить от «подключился и выкинут»: причина отключения —
+// код драйвера (wifi_err_reason_t), 15 — не сошлось рукопожатие, то есть пароль.
+static void apEvents(arduino_event_id_t ev, arduino_event_info_t info) {
+    switch (ev) {
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+        Serial.printf("[net] к точке доступа подключился %02x:%02x:%02x:%02x:%02x:%02x\n",
+                      info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
+                      info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
+                      info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+        Serial.printf("[net] от точки доступа отключился …%02x:%02x, причина %u\n",
+                      info.wifi_ap_stadisconnected.mac[4], info.wifi_ap_stadisconnected.mac[5],
+                      info.wifi_ap_stadisconnected.reason);
+        break;
+    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+        Serial.printf("[net] телефону выдан адрес %s\n",
+                      IPAddress(info.wifi_ap_staipassigned.ip.addr).toString().c_str());
+        break;
+    default: break;
+    }
+}
+
 void netStart() {
+    WiFi.onEvent(apEvents);
     WiFi.persistent(false);
     WiFi.setSleep(false);          // сон Wi-Fi мешает совместной работе с BLE
 

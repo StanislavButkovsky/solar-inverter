@@ -6,6 +6,7 @@
 #include "cfg.h"
 #include "events.h"
 #include "inv.h"
+#include "net.h"
 #include <NimBLEDevice.h>
 
 static const NimBLEUUID SVC_UUID((uint16_t)0xFFF0);
@@ -217,7 +218,11 @@ std::vector<BleFound> dalyScan(uint8_t seconds) {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setActiveScan(true);
     scan->setInterval(100);
-    scan->setWindow(99);
+    // Радио у ESP32 одно на Wi-Fi и Bluetooth. С окном 99 из 100 точка доступа
+    // 26.10.2026 не пускала телефон вовсе: «Не удаётся подключиться», до платы
+    // не доходило ни одной попытки. Пока она поднята — человек настраивает
+    // модуль — эфир делим: Bluetooth слушает четверть времени.
+    scan->setWindow(netApActive() ? 25 : 99);
     NimBLEScanResults res = scan->getResults(seconds * 1000, false);
     for (int i = 0; i < (int)res.getCount(); i++) {
         const NimBLEAdvertisedDevice* d = res.getDevice(i);
@@ -401,7 +406,8 @@ static void dalyTask(void*) {
             // падал на совместной работе радио. Ищем, только если привязана.
             if (!s_ble || cfg().bmsMac.isEmpty()) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
 #endif
-            if (millis() - lastTry > 5000) {
+            // При поднятой точке доступа — реже: см. окно в dalyScan().
+            if (millis() - lastTry > (netApActive() ? 20000u : 5000u)) {
                 lastTry = millis();
                 if (findTarget(5)) {
                     if (!connectTarget()) vTaskDelay(pdMS_TO_TICKS(2000));
