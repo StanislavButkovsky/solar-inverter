@@ -1319,11 +1319,15 @@ function renderInv(v, b) {
   $("i_load").innerHTML = live ? (w(v.outW) + " · " + v.loadPct + " %") : "—";
   $("i_pv").innerHTML   = live ? (v.pvW > 20 ? v.pvV.toFixed(0) + " В · " + w(v.pvW) : "нет выработки") : "—";
   $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
-  // Считается только при работе от батареи: от сети инвертор не отдаёт,
-  // сколько берёт из сети, и потери не отделить (stats.cpp, SelfRec).
-  var selfDay = v.selfS >= 1800 ? " · ≈ " + (v.selfWh * 3600 / v.selfS * 24 / 1000).toFixed(1).replace(".", ",") + " кВт·ч/сут" : "";
-  $("i_self").innerHTML = live && v.selfW != null ? ("≈ " + Math.max(Math.round(v.selfW), 0) + " Вт" + selfDay)
-                        : (live ? "считается только от батареи" + selfDay : "—");
+  // Среднее за сегодня по работе от батареи (stats.cpp, SelfRec). Значение
+  // «сейчас» не показываем: ток BMS приходит снимком раз в 20–60 с, и
+  // 26.10.2026 мгновенное скакало от −100 до +400 Вт при среднем ~90.
+  if (v.selfS >= 1800) {
+    var sAvg = v.selfWh * 3600 / v.selfS;
+    $("i_self").innerHTML = "≈ " + Math.round(sAvg) + " Вт · ≈ " + (sAvg * 24 / 1000).toFixed(1).replace(".", ",") +
+      " кВт·ч/сут <span class=\"sub\">(среднее за сегодня, по " +
+      (v.selfS >= 3600 ? Math.floor(v.selfS / 3600) + " ч" : Math.floor(v.selfS / 60) + " мин") + " от батареи)</span>";
+  } else $("i_self").innerHTML = "считается при работе от батареи — пока мало данных";
   // В карте регистров этого донгла приоритетов нет — честнее прочерк, чем догадка.
   $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "неизвестно") : "—";
   show("i_faultrow", live && v.fault > 0);

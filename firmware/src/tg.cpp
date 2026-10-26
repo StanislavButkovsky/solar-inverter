@@ -82,29 +82,6 @@ static const char* modeName(uint8_t m) {
     }
 }
 
-static String statusText() {
-    InvState v = invSnapshot();
-    String r = "☀️ Состояние\n";
-    if (!v.fresh) {
-        r += "инвертор: нет связи\n";
-    } else {
-        r += "режим: " + String(modeName(v.mode)) + "\n";
-        r += "сеть: " + (v.gridOn ? String(v.gridV, 0) + " В" : String("НЕТ")) + "\n";
-        r += "нагрузка: " + String(v.outW, 0) + " Вт (" + String(v.loadPct) + " %)\n";
-        r += "панели: " + String(v.pvW, 0) + " Вт\n";
-        r += "температура: " + String(v.tempC) + " °C\n";
-        float sw = statsSelfW();
-        if (!isnan(sw)) r += "сам инвертор: ≈ " + String(sw, 0) + " Вт\n";
-    }
-    r += battLine() + "\n";
-    float pv, grid, load;
-    statsToday(pv, grid, load);
-    if (v.pvKwhToday >= 0) { pv = v.pvKwhToday * 1000; grid = v.gridKwhToday * 1000; load = v.loadKwhToday * 1000; }
-    r += "за сегодня: солнце " + String(pv / 1000, 2) + ", сеть " + String(grid / 1000, 2) +
-         ", нагрузка " + String(load / 1000, 2) + " кВт·ч";
-    return r;
-}
-
 // «сам инвертор: ≈ 51 Вт, ≈ 1,2 кВт·ч в сутки (по 9 ч от батареи)». Считается
 // только при работе от батареи (stats.cpp, SelfRec) — меньше получаса такой
 // работы за период не показываем: среднее выйдет случайным. days = 0 — сегодня.
@@ -121,6 +98,28 @@ static String selfLine(float wh, uint32_t s, uint32_t days = 0) {
     }
     String t = s >= 3600 ? String(s / 3600) + " ч" : String(s / 60) + " мин";
     return r + " (по " + t + " от батареи)\n";
+}
+
+static String statusText() {
+    InvState v = invSnapshot();
+    String r = "☀️ Состояние\n";
+    if (!v.fresh) {
+        r += "инвертор: нет связи\n";
+    } else {
+        r += "режим: " + String(modeName(v.mode)) + "\n";
+        r += "сеть: " + (v.gridOn ? String(v.gridV, 0) + " В" : String("НЕТ")) + "\n";
+        r += "нагрузка: " + String(v.outW, 0) + " Вт (" + String(v.loadPct) + " %)\n";
+        r += "панели: " + String(v.pvW, 0) + " Вт\n";
+        r += "температура: " + String(v.tempC) + " °C\n";
+        r += selfLine(0, 0);              // среднее за сегодня: мгновенное слишком шумное
+    }
+    r += battLine() + "\n";
+    float pv, grid, load;
+    statsToday(pv, grid, load);
+    if (v.pvKwhToday >= 0) { pv = v.pvKwhToday * 1000; grid = v.gridKwhToday * 1000; load = v.loadKwhToday * 1000; }
+    r += "за сегодня: солнце " + String(pv / 1000, 2) + ", сеть " + String(grid / 1000, 2) +
+         ", нагрузка " + String(load / 1000, 2) + " кВт·ч";
+    return r;
 }
 
 static String todayText() {
