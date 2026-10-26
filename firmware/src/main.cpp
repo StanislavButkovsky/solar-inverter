@@ -23,6 +23,8 @@
 #include "ota.h"
 #include "tg.h"
 #include "bootlog.h"
+#include <esp_heap_caps.h>
+#include <mbedtls/platform.h>
 #include "weather.h"
 #include "schedule.h"
 #include "battlife.h"
@@ -40,10 +42,24 @@ static String deviceName() {
     return String(buf);
 }
 
+// Память шифрования (TLS бота и погоды) — в PSRAM. Ядро Arduino собрано с
+// CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC: буферы рукопожатия и записей (~40 КБ на
+// соединение) брались из встроенной памяти, которой на S3 впритык, — отсюда
+// «TLS один за раз» (tlsLock). mbedTLS позволяет подменить выделение на ходу —
+// то же, что штатное CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC. Нет PSRAM или она
+// кончилась — встроенная, как было.
+static void* tlsCalloc(size_t n, size_t sz) {
+    void* p = heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+static void tlsFree(void* p) { heap_caps_free(p); }
+
 void setup() {
     Serial.begin(115200);
     delay(300);
     bootStart();
+
+    if (psramFound()) mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);   // до первого TLS
 
     stateInit();
     cfgInit();
