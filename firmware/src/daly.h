@@ -52,3 +52,4 @@ void   dalyParseFrame(const uint8_t* f);
 // «батарея не находится» не увидеть.
 void   bleLog(const char* fmt, ...);
 String bleLogText();
+String dalyD2Report();     // последний ответ протокола D2 — регистры для сверки

@@ -49,6 +49,8 @@ struct BmsState {
     uint8_t  tempCount     = 0;
     uint8_t  chargerOn     = 0;
     uint8_t  loadOn        = 0;
+    uint16_t cycles        = 0;      // циклы заряда (протокол D2); 0 — не отдаёт
+    uint8_t  proto         = 0;      // протокол BMS: 0 не ясно, 1 — A5 (старый DALY), 2 — D2 (Modbus)
 
     // --- 0x95 / 0x96 / 0x97 / 0x98 ---
     uint16_t cellMv[MAX_CELLS]   = {0};

@@ -70,6 +70,10 @@ static String jsonState() {
     j += ",\"dsgMos\":" + String(s.dischargeMos ? "true" : "false");
     j += ",\"remainAh\":" + String(s.remainingMah / 1000.0, 2);
     j += ",\"capAh\":" + String(s.capAh, 0);
+    j += ",\"cycles\":" + String(s.cycles) + ",\"proto\":" + String(s.proto);
+    j += ",\"temps\":[";
+    for (uint8_t i = 0; i < s.tempCount && i < MAX_TEMPS; i++) j += (i ? "," : "") + String(s.cellTemp[i]);
+    j += "]";
     j += ",\"limA\":" + String(s.chgLimitA, 1) + ",\"cvV\":" + String(s.cvV, 1);
     j += ",\"bFault\":" + String(s.bmsFault) + ",\"bWarn\":" + String(s.bmsWarn);
     float iAvg = statsBattAvgA();
@@ -644,7 +648,7 @@ void webStart() {
     // Журнал Bluetooth: поиски, кого услышали, подключения к батарее и донглу.
     server.on("/api/ble/log", HTTP_GET, []() {
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "text/plain; charset=utf-8", bleLogText());
+        server.send(200, "text/plain; charset=utf-8", bleLogText() + "\n" + dalyD2Report());
     });
 #endif
 

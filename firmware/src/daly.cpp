@@ -7,6 +7,7 @@
 #include "events.h"
 #include "inv.h"
 #include "net.h"
+#include "modbus.h"
 #include <NimBLEDevice.h>
 #include <time.h>
 #include <stdarg.h>
@@ -147,6 +148,7 @@ void dalyParseFrame(const uint8_t* f) {
         }
 
         s.framesOk++;
+        s.proto       = 1;
         s.lastFrameMs = millis();
         s.fresh       = true;
     });
@@ -183,7 +185,107 @@ static void feed(const uint8_t* data, size_t n) {
     }
 }
 
+// Сырые уведомления — в журнал: первые несколько и дальше каждое сотое.
+// 26.10.2026 батарея DL-… подключилась и подписалась, но за минуту не дала
+// ни одного кадра A5 — непонятно было, молчит она или говорит иначе.
+static volatile uint32_t s_notifies = 0;
+static uint32_t          s_connAt = 0;
+
+static void logHex(const char* what, const uint8_t* d, size_t n) {
+    char h[3 * 24 + 1];
+    size_t m = n < 24 ? n : 24, k = 0;
+    for (size_t i = 0; i < m; i++) k += snprintf(h + k, sizeof(h) - k, "%02X ", d[i]);
+    h[k] = 0;
+    bleLog("[ble] %s, %u байт: %s%s", what, (unsigned)n, h, n > m ? "…" : "");
+}
+
+// Ответ протокола D2 (Modbus): D2 03 <байт> <регистры…> <CRC>. Собираем
+// целиком — он может прийти несколькими уведомлениями — и держим последний
+// для разбора: карта регистров этой BMS ещё не сверена.
+static uint8_t  s_d2[160];
+static size_t   s_d2Len = 0;
+static uint16_t s_d2Reg[80];
+static uint8_t  s_d2N = 0;
+static uint32_t s_d2Ms = 0;
+
+// Карта D2 (новые DALY под приложением Smart BMS 4.x), сверена 26.10.2026 на
+// батарее DL-41190401535D (14S) с инвертором: 56,0 В против 55,9 у инвертора,
+// ток со знаком заряда, ячейки 4002…4007 мВ, разброс 5 мВ.
+//   0–31 ячейки, мВ · 32–39 температуры +40 (255 — нет датчика)
+//   40 напряжение ×0,1 В · 41 ток (x−30000)×0,1 А, + заряд · 42 SOC ×0,1 %
+//   43/44 макс./мин. ячейка, мВ · 45/46 макс./мин. температура +40
+//   47 состояние (0 покой, 1 заряд, 2 разряд) · 48 остаток ×0,1 А·ч
+//   49 число ячеек · 50 число датчиков · 51 циклы · 53/54 ключи заряда/разряда
+//   57 мощность, Вт? · 59–61 аварии — не расшифрованы, пишутся в журнал
+static void applyD2() {
+    const uint16_t* r = s_d2Reg;
+    if (s_d2N < 58) return;
+    uint8_t nc = r[49] > 0 && r[49] <= 32 ? r[49] : 0;
+    uint8_t nt = r[50] <= 8 ? r[50] : 0;
+    stateUpdate([&](BmsState& s) {
+        s.proto     = 2;
+        s.cellCount = nc;
+        s.tempCount = nt;
+        for (uint8_t i = 0; i < nc && i < MAX_CELLS; i++) s.cellMv[i] = r[i];
+        for (uint8_t i = 0; i < nt && i < MAX_TEMPS; i++) s.cellTemp[i] = r[32 + i] == 255 ? 0 : (int16_t)r[32 + i] - 40;
+        s.voltage   = r[40] * 0.1f;
+        s.current   = ((int32_t)r[41] - 30000) * 0.1f;
+        s.soc       = r[42] * 0.1f;
+        s.socKnown  = true;
+        s.cellMaxMv = r[43];
+        s.cellMinMv = r[44];
+        s.tempMax   = (int16_t)r[45] - 40;
+        s.tempMin   = (int16_t)r[46] - 40;
+        s.chargeState  = r[47] <= 2 ? r[47] : 0;
+        s.remainingMah = (uint32_t)r[48] * 100;
+        if (s.soc > 5) s.capAh = r[48] * 0.1f * 100.0f / s.soc;
+        s.cycles       = r[51];
+        s.chargeMos    = r[53] != 0;
+        s.dischargeMos = r[54] != 0;
+        s.framesOk++;
+        s.lastFrameMs = millis();
+        s.fresh = true;
+    });
+    static uint16_t lastF[3] = {0, 0, 0};
+    if (s_d2N >= 62 && (r[59] != lastF[0] || r[60] != lastF[1] || r[61] != lastF[2])) {
+        lastF[0] = r[59]; lastF[1] = r[60]; lastF[2] = r[61];
+        bleLog("[ble] D2 аварии/флаги 59–61: %04X %04X %04X", r[59], r[60], r[61]);
+    }
+}
+
+static void feedD2(const uint8_t* p, size_t n) {
+    if (s_d2Len == 0 && !(n >= 3 && p[0] == 0xD2 && p[1] == 0x03)) return;
+    if (s_d2Len + n > sizeof(s_d2)) { s_d2Len = 0; return; }
+    memcpy(s_d2 + s_d2Len, p, n);
+    s_d2Len += n;
+    size_t need = 3 + (size_t)s_d2[2] + 2;
+    if (s_d2Len < need) return;
+    if (mbCrc16(s_d2, need - 2) == (uint16_t)(s_d2[need - 2] | (s_d2[need - 1] << 8))) {
+        s_d2N = s_d2[2] / 2 > 80 ? 80 : s_d2[2] / 2;
+        for (uint8_t i = 0; i < s_d2N; i++) s_d2Reg[i] = (s_d2[3 + i * 2] << 8) | s_d2[4 + i * 2];
+        s_d2Ms = millis();
+        applyD2();
+    } else {
+        bleLog("[ble] ответ D2 с неверной суммой, %u байт", (unsigned)s_d2Len);
+    }
+    s_d2Len = 0;
+}
+
+String dalyD2Report() {
+    if (!s_d2N) return String();
+    String o = "регистры D2 (номер: число), ответ " + String((millis() - s_d2Ms) / 1000) + " с назад:\n";
+    for (uint8_t i = 0; i < s_d2N; i++) {
+        char b[24];
+        snprintf(b, sizeof(b), "%2u: %5u%s", i, s_d2Reg[i], (i % 8 == 7 || i == s_d2N - 1) ? "\n" : "   ");
+        o += b;
+    }
+    return o;
+}
+
 static void notifyCB(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool isNotify) {
+    uint32_t c = ++s_notifies;
+    if (c <= 6 || c % 100 == 0) logHex(("уведомление " + String(c)).c_str(), data, len);
+    feedD2(data, len);
     feed(data, len);
 }
 
@@ -394,7 +496,10 @@ static bool connectTarget() {
         s.rssi = rssi;
     });
 
-    bleLog("[ble] подключено, подписка активна");
+    bleLog("[ble] подключено, подписка активна; запись %s",
+           s_txChar->canWriteNoResponse() ? "без подтверждения" : "с подтверждением");
+    s_notifies = 0;
+    s_connAt = millis();
     evAdd(EV_BMS_UP, s_targetAddr.toString().c_str());
     return true;
 }
@@ -500,8 +605,23 @@ static void dalyTask(void*) {
             continue;
         }
 
-        requestId(cycle[step]);
-        step = (step + 1) % (sizeof(cycle) / sizeof(cycle[0]));
+        // Протокол: старый DALY (кадры A5 по DataID) или новый — Modbus с
+        // адресом D2, все 62 регистра одним запросом (BMS под приложением
+        // Smart BMS 4.x). Пока не ясно — A5 по кругу и раз в 10 с проба D2.
+        uint8_t proto = stateSnapshot().proto;
+        static uint32_t lastD2 = 0;
+        if (proto != 2) {
+            requestId(cycle[step]);
+            step = (step + 1) % (sizeof(cycle) / sizeof(cycle[0]));
+        }
+        uint32_t d2Every = proto == 2 ? 2000 : 10000;
+        if (proto != 1 && s_txChar && millis() - s_connAt > (proto == 2 ? 0u : 15000u) && millis() - lastD2 > d2Every) {
+            lastD2 = millis();
+            uint8_t q[8];
+            mbBuildRead(q, 0xD2, 0x0000, 0x3E);
+            if (proto != 2) logHex("молчит на A5, пробую D2", q, 8);
+            s_txChar->writeValue(q, 8, !s_txChar->canWriteNoResponse());
+        }
 
         // Свежесть данных: молчание дольше STALE_MS — это уже не связь.
         stateUpdate([](BmsState& s) {

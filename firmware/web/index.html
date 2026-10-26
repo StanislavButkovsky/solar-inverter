@@ -1714,6 +1714,9 @@ var tgLowSet = false;
 function tgRender(s) {
   var t = s.tg;
   if (!t) return;
+  // Сборка без бота: вкладки нет вовсе.
+  show("tb_tg", !t.absent);
+  if (t.absent) { if (setTabNow === "tg") setTab("inv"); return; }
   var low = $("tg_low");
   if (!tgLowSet && document.activeElement !== low) { low.value = t.low; tgLowSet = true; }
   var rows = document.querySelectorAll(".tg_passrow");

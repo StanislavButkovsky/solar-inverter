@@ -1,3 +1,6 @@
+// Сборки без бота (NO_TG: первое устройство) берут tg_none.cpp.
+#if !defined(NO_TG)
+
 #include "tg.h"
 #include "tg_roots.h"
 #include "cfg.h"
@@ -803,3 +806,5 @@ String tgStateJson() {
     j += ",\"err\":\"" + e + "\"}";
     return j;
 }
+
+#endif
