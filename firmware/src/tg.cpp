@@ -93,6 +93,8 @@ static String statusText() {
         r += "нагрузка: " + String(v.outW, 0) + " Вт (" + String(v.loadPct) + " %)\n";
         r += "панели: " + String(v.pvW, 0) + " Вт\n";
         r += "температура: " + String(v.tempC) + " °C\n";
+        float sw = statsSelfW();
+        if (!isnan(sw)) r += "сам инвертор: ≈ " + String(sw, 0) + " Вт\n";
     }
     r += battLine() + "\n";
     float pv, grid, load;
@@ -101,6 +103,24 @@ static String statusText() {
     r += "за сегодня: солнце " + String(pv / 1000, 2) + ", сеть " + String(grid / 1000, 2) +
          ", нагрузка " + String(load / 1000, 2) + " кВт·ч";
     return r;
+}
+
+// «сам инвертор: ≈ 51 Вт, ≈ 1,2 кВт·ч в сутки (по 9 ч от батареи)». Считается
+// только при работе от батареи (stats.cpp, SelfRec) — меньше получаса такой
+// работы за период не показываем: среднее выйдет случайным. days = 0 — сегодня.
+static String selfLine(float wh, uint32_t s, uint32_t days = 0) {
+    if (!days) statsSelfToday(wh, s);
+    if (s < 1800) return "";
+    float avgW = wh * 3600 / s;
+    String day = String(avgW * 24 / 1000, 1);
+    day.replace('.', ',');
+    String r = "сам инвертор: ≈ " + String(avgW, 0) + " Вт, ≈ " + day + " кВт·ч в сутки";
+    if (days > 1) {
+        String all = String(avgW * 24 * days / 1000, 0);
+        r += ", за период ≈ " + all + " кВт·ч";
+    }
+    String t = s >= 3600 ? String(s / 3600) + " ч" : String(s / 60) + " мин";
+    return r + " (по " + t + " от батареи)\n";
 }
 
 static String todayText() {
@@ -119,6 +139,7 @@ static String todayText() {
     if (fc0 > 0) r += "прогноз солнца был " + String(fc0, 1) + " кВт·ч — факт " + String(pv / 1000 / fc0 * 100, 0) + " %\n";
     if (fc1 >= 0) r += "завтра по прогнозу: " + String(fc1, 1) + " кВт·ч\n";
     if (cfg().price > 0) r += "солнце сэкономило ≈ " + String(pv / 1000 * cfg().price, 0) + " ₽\n";
+    r += selfLine(0, 0);
     r += battLine();
     return r;
 }
@@ -166,6 +187,7 @@ static String periodText(const String& title, uint32_t from, uint32_t to, uint32
     r += "из сети: " + kwh(a.gridWh) + vs(a.gridWh, b.gridWh, prevName) + "\n";
     r += "нагрузка: " + kwh(a.loadWh) + vs(a.loadWh, b.loadWh, prevName) + "\n";
     if (a.pvFcWh > 0) r += "прогноз солнца: " + kwh(a.pvFcWh) + " — факт " + String((int)lroundf(a.pvWh / a.pvFcWh * 100)) + " %\n";
+    r += selfLine(a.selfWh, a.selfS, days);
     if (cfg().price > 0) {
         r += "экономия: ≈ " + String((int)lroundf(a.pvWh / 1000 * cfg().price)) + " ₽";
         if (havePrev && b.pvWh > 0) r += " (" + String(prevName) + " " + String((int)lroundf(b.pvWh / 1000 * cfg().price)) + " ₽)";

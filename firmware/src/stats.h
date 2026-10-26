@@ -31,11 +31,16 @@ void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня
 void   statsTodayOutages(uint32_t& seconds, uint16_t& count);
 void   statsSetPvForecast(float wh);
+// Сколько тратит сам инвертор — считается только при работе от батареи
+// (см. SelfRec в stats.cpp). Сейчас, Вт: NAN — не от батареи или нет данных.
+float  statsSelfW();
+void   statsSelfToday(float& wh, uint32_t& seconds);   // за сегодня: энергия и секунды счёта
 
 // Суммы за дни fromDay..toDay включительно (местные сутки от 1970) — для
 // сводок за неделю и месяц. Только из loop(): читает файл дней.
 struct StatSum {
     float pvWh, gridWh, loadWh, battWh, pvFcWh, ahOut;
+    float selfWh; uint32_t selfS;         // сам инвертор: энергия и секунды работы от батареи
     uint32_t outageS, dataS, socMinSum;   // socMinSum — сумма дневных минимумов заряда, %
     uint16_t outages, socDays, deepDays;  // дней, когда заряд знали; из них разряжались до 20 % и ниже
 };

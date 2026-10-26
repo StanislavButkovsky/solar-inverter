@@ -27,6 +27,7 @@ static const char* F_OUT   = "/stats/outages.bin";
 static const char* F_PWR   = "/stats/power.bin";
 static const char* F_MIXD  = "/stats/mixd.bin";   // кто кормил нагрузку — по дням
 static const char* F_MIXH  = "/stats/mixh.bin";   // — по часам
+static const char* F_SELF  = "/stats/selfd.bin";  // сколько тратит сам инвертор — по дням
 
 // Мощности за сутки: средние за 5 минут, 288 точек кольцом — для графика.
 // Вт со знаком у батареи (заряд +, разряд −); заряд в процентах, 255 — нет.
@@ -132,6 +133,22 @@ static MixRec s_mixD, s_mixH, s_mixP;                  // день, час, бе
 static void readMix(const char* f, uint16_t n, uint32_t t, MixRec& r);
 static void writeMix(const char* f, uint16_t n, const MixRec& r);
 
+// Сколько тратит сам инвертор (вентиляторы, плата, потери преобразования):
+// всё, что вошло, минус всё, что вышло. Честно посчитать можно только при
+// работе от батареи: там все три потока измерены — солнце и нагрузка
+// инвертором, батарея током BMS. От сети инвертор отдаёт не мощность из сети,
+// а её считает прошивка (нагрузка + заряд − солнце, profile_hs35.cpp), и
+// потери в этом режиме прячутся в «сеть». Поэтому копятся энергия и секунды
+// только работы от батареи, а за сутки — это среднее, приведённое к 24 ч.
+// Пишется с 26.10.2026.
+struct SelfRec { uint32_t t; float wh; uint32_t s; uint32_t _r; };
+static_assert(sizeof(SelfRec) == 16, "SelfRec");
+static SelfRec s_selfD, s_selfP;                       // день, без времени
+static float    s_selfW = 0;                           // сглаженное за ~минуту, Вт
+static uint32_t s_selfMs = 0;                          // millis() последнего показания
+static void readSelf(uint32_t d, SelfRec& r);
+static void writeSelf(const SelfRec& r);
+
 bool statsSum(uint32_t from, uint32_t to, StatSum& o) {
     memset(&o, 0, sizeof(o));
     if (!s_bound || from > to) return false;
@@ -141,6 +158,9 @@ bool statsSum(uint32_t from, uint32_t to, StatSum& o) {
         o.pvWh += r.pvWh; o.gridWh += r.gridWh; o.loadWh += r.loadWh; o.battWh += r.battWh;
         o.pvFcWh += r.pvFcWh; o.outageS += r.outageS; o.dataS += r.dataS; o.outages += r.outages;
         o.ahOut += r.ahOut;
+        SelfRec sr;
+        readSelf(d, sr);
+        o.selfWh += sr.wh; o.selfS += sr.s;
         if (r.socMin) {
             o.socMinSum += r.socMin - 1;
             o.socDays++;
@@ -291,6 +311,7 @@ static void flush() {
     writeHour(s_hour);
     writeMix(F_MIXD, NDAYS, s_mixD);
     writeMix(F_MIXH, NHOURS, s_mixH);
+    writeSelf(s_selfD);
 
     // Текущее отключение: конец «пока что» — чтобы после пропажи питания
     // в журнале остался хотя бы его нижний предел.
@@ -323,6 +344,9 @@ static void bindTime() {
     s_mixD.pv += s_mixP.pv; s_mixD.batt += s_mixP.batt; s_mixD.grid += s_mixP.grid;
     s_mixH.pv += s_mixP.pv; s_mixH.batt += s_mixP.batt; s_mixH.grid += s_mixP.grid;
     memset(&s_mixP, 0, sizeof(s_mixP));
+    readSelf(d, s_selfD);
+    s_selfD.wh += s_selfP.wh; s_selfD.s += s_selfP.s;
+    memset(&s_selfP, 0, sizeof(s_selfP));
 
     memset(&s_pend, 0, sizeof(s_pend));
     memset(&s_pendH, 0, sizeof(s_pendH));
@@ -342,6 +366,8 @@ static void rollover() {
     if (d != s_day.day) {
         writeMix(F_MIXD, NDAYS, s_mixD);
         readMix(F_MIXD, NDAYS, d, s_mixD);
+        writeSelf(s_selfD);
+        readSelf(d, s_selfD);
         writeDay(s_day);
         readDay(d, s_day);
         if (s_day.day != d) { memset(&s_day, 0, sizeof(s_day)); s_day.day = d; }
@@ -434,6 +460,24 @@ void statsLoop() {
             if (s_bound) { s_mixH.pv += pvU * k; s_mixH.batt += bU * k; s_mixH.grid += gU * k; }
         }
 
+        // Сам инвертор (см. SelfRec). Ток батареи обновляется реже нагрузки,
+        // и на скачке нагрузки секундная разница уходит на сотни ватт то в
+        // минус, то в плюс. Отсекать выбросы нельзя: 26.10.2026 отсечка
+        // −300…800 Вт выкидывала скачки вверх (большой минус) и оставляла
+        // скачки вниз — среднее ползло вверх. Без отсечки запаздывание на
+        // подъёме и на спаде в интеграле взаимно гасится; на странице —
+        // сглаженное за ~2 минуты.
+        if (v.mode == INVM_BATTERY && b.fresh) {
+            float sw = v.pvW - b.voltage * b.current - v.outW;
+            if (fabsf(sw) < 5000) {                     // только явный мусор разбора
+                s_selfW = (ms - s_selfMs > 30000) ? sw : s_selfW + (sw - s_selfW) * fminf(dt / 120.0f, 1.0f);
+                s_selfMs = ms;
+                SelfRec& S = s_bound ? s_selfD : s_selfP;
+                S.wh += sw * k;
+                S.s  += (uint32_t)(dt + 0.5f);
+            }
+        }
+
         if (s_bound) pwrSample(v, b);
         if (b.fresh && b.current < -0.3f) D.ahOut += -b.current * k;   // А·ч разряда — для износа
         if (b.fresh && b.socKnown) {
@@ -482,6 +526,7 @@ void statsStart() {
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
     ensureFile(F_MIXD,  NDAYS * sizeof(MixRec));
     ensureFile(F_MIXH,  NHOURS * sizeof(MixRec));
+    ensureFile(F_SELF,  NDAYS * sizeof(SelfRec));
     LittleFS.remove("/stats/cnt.bin");            // от сборки 22.10, где счётчики ещё учитывались
 
     // Отключение, оборванное пропажей питания платы, закрываем тем концом,
@@ -518,6 +563,23 @@ static void mixDayAt(uint32_t d, MixRec& r) {
     if (d == s_mixD.t) { r = s_mixD; return; }
     readMix(F_MIXD, NDAYS, d, r);
 }
+static void readSelf(uint32_t d, SelfRec& r) {
+    if (d == s_selfD.t && s_bound) { r = s_selfD; return; }
+    memset(&r, 0, sizeof(r));
+    if (s_fs) readAt(F_SELF, (d % NDAYS) * sizeof(SelfRec), &r, sizeof(r));
+    if (r.t != d) { memset(&r, 0, sizeof(r)); r.t = d; }
+}
+static void writeSelf(const SelfRec& r) {
+    if (r.t && s_fs) writeAt(F_SELF, (r.t % NDAYS) * sizeof(SelfRec), &r, sizeof(r));
+}
+
+float statsSelfW() { return s_selfMs && millis() - s_selfMs < 30000 ? s_selfW : NAN; }
+
+void statsSelfToday(float& wh, uint32_t& s) {
+    const SelfRec& r = s_bound ? s_selfD : s_selfP;
+    wh = r.wh; s = r.s;
+}
+
 static void putMix(String& j, const MixRec& m) {
     put(j, "lp", m.pv, 0); put(j, "lb", m.batt, 0); put(j, "lg", m.grid, 0);
 }
@@ -547,7 +609,7 @@ static void dayAt(uint32_t d, DayRec& r) {
     if (r.day != d) { memset(&r, 0, sizeof(r)); r.day = d; }
 }
 
-static void totals(String& j, const DayRec& t) {
+static void totals(String& j, const DayRec& t, const SelfRec* sf = nullptr) {
     j += ",\"tot\":{\"x\":0";
     put(j, "g", t.gridWh, 0); put(j, "l", t.loadWh, 0); put(j, "b", t.battWh, 0);
     put(j, "p", t.pvWh, 0);   put(j, "c", t.chgWh, 0);
@@ -559,6 +621,7 @@ static void totals(String& j, const DayRec& t) {
     put(j, "lmax", (uint32_t)t.loadMax);
     put(j, "smin", (uint32_t)(t.socMin ? t.socMin - 1 : 0));
     put(j, "shas", (uint32_t)(t.socMin ? 1 : 0));
+    if (sf) { put(j, "sw", sf->wh, 0); put(j, "ss", sf->s); }
     j += "}";
 }
 
@@ -575,6 +638,8 @@ String statsJson(const String& range) {
     memset(&tot, 0, sizeof(tot));
     MixRec mtot;
     memset(&mtot, 0, sizeof(mtot));
+    SelfRec stot;
+    memset(&stot, 0, sizeof(stot));
     j = "{\"valid\":true,\"range\":\"" + range + "\",\"today\":" + String(d0) + ",\"bars\":[";
 
     if (range == "day") {
@@ -589,6 +654,7 @@ String statsJson(const String& range) {
         }
         tot = s_day;
         mtot = s_mixD;
+        stot = s_selfD;
     } else if (range == "week" || range == "month") {
         uint32_t from = d0 - 6;
         if (range == "month") {
@@ -605,6 +671,9 @@ String statsJson(const String& range) {
             bar(j, d, r, d == from, &m);
             mergeDay(tot, r);
             mtot.pv += m.pv; mtot.batt += m.batt; mtot.grid += m.grid;
+            SelfRec sr;
+            readSelf(d, sr);
+            stot.wh += sr.wh; stot.s += sr.s;
         }
     } else {                                           // year: 12 месяцев, текущий последним
         time_t t = (time_t)d0 * 86400;
@@ -633,6 +702,9 @@ String statsJson(const String& range) {
             mixDayAt(r.day, m);
             MixRec& M = mm[11 - back];
             M.pv += m.pv; M.batt += m.batt; M.grid += m.grid;
+            SelfRec sr;
+            readSelf(r.day, sr);
+            stot.wh += sr.wh; stot.s += sr.s;
         }
         if (f) f.close();
         for (int i = 0; i < 12; i++) {
@@ -642,7 +714,7 @@ String statsJson(const String& range) {
         }
     }
     j += "]";
-    totals(j, tot);
+    totals(j, tot, &stot);
     j += ",\"mix\":{\"x\":0";
     putMix(j, mtot);
     j += "}";
@@ -664,6 +736,10 @@ void statsClear() {
     memset(&s_mixD, 0, sizeof(s_mixD)); s_mixD.t = s_bound ? today() : 0;
     memset(&s_mixH, 0, sizeof(s_mixH)); s_mixH.t = s_bound ? thisHour() : 0;
     memset(&s_mixP, 0, sizeof(s_mixP));
+    LittleFS.remove(F_SELF);
+    ensureFile(F_SELF, NDAYS * sizeof(SelfRec));
+    memset(&s_selfD, 0, sizeof(s_selfD)); s_selfD.t = s_bound ? today() : 0;
+    memset(&s_selfP, 0, sizeof(s_selfP));
 
     ensureFile(F_PWR,   NPWR * sizeof(PwrRec));
     s_pSlot = 0; s_pN = s_pSocN = 0;

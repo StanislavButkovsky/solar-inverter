@@ -144,6 +144,12 @@ static String jsonState() {
     j += ",\"pvToday\":"   + String(v.pvKwhToday   >= 0 ? v.pvKwhToday   : sPv   / 1000.0f, 2);
     j += ",\"gridToday\":" + String(v.gridKwhToday >= 0 ? v.gridKwhToday : sGrid / 1000.0f, 2);
     j += ",\"loadToday\":" + String(v.loadKwhToday >= 0 ? v.loadKwhToday : sLoad / 1000.0f, 2);
+    // Сам инвертор: сейчас (только от батареи, иначе null) и за сегодня.
+    float selfW = statsSelfW(), selfWh;
+    uint32_t selfS;
+    statsSelfToday(selfWh, selfS);
+    j += ",\"selfW\":" + (isnan(selfW) ? String("null") : String(selfW, 0));
+    j += ",\"selfWh\":" + String(selfWh, 0) + ",\"selfS\":" + String(selfS);
     j += ",\"todaySrc\":\"" + String(v.pvKwhToday >= 0 ? "inv" : "stats") + "\"";
     // Счётчики инвертора «всего», кВт·ч — по ним считается статистика.
     j += ",\"cnt\":{\"pv\":" + String(v.pvKwhTotal, 2) + ",\"grid\":" + String(v.gridKwhTotal, 2) +

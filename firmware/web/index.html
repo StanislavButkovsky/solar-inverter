@@ -372,6 +372,7 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Нагрузка</td><td id="i_load">—</td></tr>
           <tr><td>Солнечные панели</td><td id="i_pv">—</td></tr>
           <tr><td>Температура</td><td id="i_temp">—</td></tr>
+          <tr id="i_selfrow"><td>Сам инвертор</td><td id="i_self">—</td></tr>
           <tr id="i_porow"><td>Приоритет выхода</td><td id="i_po">—</td></tr>
           <tr class="hidden" id="i_faultrow"><td id="i_faultk">Авария</td><td id="i_fault">—</td></tr>
           <tr id="i_pcrow"><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
@@ -559,6 +560,7 @@ body.light pre.rep { background: #f2f4f8; }
       <tr><td>Солнечные панели</td><td id="st_p">—</td></tr>
       <tr><td>Солнце по прогнозу</td><td id="st_f">—</td></tr>
       <tr><td>Экономия на солнце</td><td id="st_save">—</td></tr>
+      <tr><td>Сам инвертор</td><td id="st_self">—</td></tr>
       <tr><td>Без сети</td><td id="st_o">—</td></tr>
       <tr><td>Данные были</td><td id="st_d">—</td></tr>
     </table>
@@ -1317,6 +1319,11 @@ function renderInv(v, b) {
   $("i_load").innerHTML = live ? (w(v.outW) + " · " + v.loadPct + " %") : "—";
   $("i_pv").innerHTML   = live ? (v.pvW > 20 ? v.pvV.toFixed(0) + " В · " + w(v.pvW) : "нет выработки") : "—";
   $("i_temp").innerHTML = live ? (v.tempC + " °C") : "—";
+  // Считается только при работе от батареи: от сети инвертор не отдаёт,
+  // сколько берёт из сети, и потери не отделить (stats.cpp, SelfRec).
+  var selfDay = v.selfS >= 1800 ? " · ≈ " + (v.selfWh * 3600 / v.selfS * 24 / 1000).toFixed(1).replace(".", ",") + " кВт·ч/сут" : "";
+  $("i_self").innerHTML = live && v.selfW != null ? ("≈ " + Math.max(Math.round(v.selfW), 0) + " Вт" + selfDay)
+                        : (live ? "считается только от батареи" + selfDay : "—");
   // В карте регистров этого донгла приоритетов нет — честнее прочерк, чем догадка.
   $("i_po").innerHTML   = live ? (PRIO_OUT[v.prioOut] || "неизвестно") : "—";
   show("i_faultrow", live && v.fault > 0);
@@ -2464,6 +2471,11 @@ function stShow() {
   $("st_p").innerHTML = t.p ? (kwh(t.p) + " кВт·ч") : "нет данных";
   $("st_f").innerHTML = t.f ? (kwh(t.f) + " кВт·ч" + (t.p ? " · факт " + Math.round(t.p / t.f * 100) + " %" : "")) : "—";
   $("st_save").innerHTML = auPrice > 0 ? ("≈ " + Math.round(t.p / 1000 * auPrice).toLocaleString("ru-RU") + " ₽") : "укажите цену в «Авто»";
+  // Среднее по часам работы от батареи, приведённое ко всему времени с данными.
+  if (t.ss >= 1800) {
+    var sw = t.sw * 3600 / t.ss;
+    $("st_self").innerHTML = "≈ " + Math.round(sw) + " Вт · ≈ " + kwh(sw * t.d / 3600) + " кВт·ч";
+  } else $("st_self").innerHTML = "мало данных — считается при работе от батареи";
   $("st_o").innerHTML = dur(t.o) + (t.n ? " · " + t.n + " раз" : "") + (s.inOutage ? " · сейчас нет" : "");
   $("st_d").innerHTML = s.valid && s.bars ? dur(t.d) : "—";
   $("st_gv").innerHTML = t.gvmax ? (t.gvmin.toFixed(1) + " … " + t.gvmax.toFixed(1) + " В") : "—";
