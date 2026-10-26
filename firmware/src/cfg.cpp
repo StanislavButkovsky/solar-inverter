@@ -8,6 +8,10 @@ void cfgInit() {
     prefs.begin("solar", false);
     g_cfg.ssid   = prefs.getString("ssid", "");
     g_cfg.pass   = prefs.getString("pass", "");
+    g_cfg.sip    = prefs.getString("sip", "");
+    g_cfg.sgw    = prefs.getString("sgw", "");
+    g_cfg.smask  = prefs.getString("smask", "");
+    g_cfg.sdns   = prefs.getString("sdns", "");
     g_cfg.bmsMac = prefs.getString("bmsmac", "");
     g_cfg.invMac = prefs.getString("invmac", "");
     g_cfg.webPass= prefs.getString("webpass", "");
@@ -33,6 +37,10 @@ Config& cfg() { return g_cfg; }
 void cfgSave() {
     prefs.putString("ssid",   g_cfg.ssid);
     prefs.putString("pass",   g_cfg.pass);
+    prefs.putString("sip",    g_cfg.sip);
+    prefs.putString("sgw",    g_cfg.sgw);
+    prefs.putString("smask",  g_cfg.smask);
+    prefs.putString("sdns",   g_cfg.sdns);
     prefs.putString("bmsmac", g_cfg.bmsMac);
     prefs.putString("invmac", g_cfg.invMac);
     prefs.putString("webpass",g_cfg.webPass);

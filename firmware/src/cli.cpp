@@ -33,6 +33,7 @@ static void help() {
         "wifi scan             список сетей\n"
         "wifi set <ssid> <pass>  задать сеть и перезагрузиться\n"
         "wifi status           состояние сети\n"
+        "wifi ip <ip> <шлюз> [маска] [dns]  свой адрес вместо DHCP; wifi ip dhcp — вернуть\n"
         "ble scan              поиск устройств BLE рядом\n"
         "ble mac <mac>         привязать батарею по адресу (пусто — искать самому)\n"
         "inv mac <mac>         привязать донгл инвертора Eybond\n"
@@ -187,6 +188,30 @@ static void exec(String line) {
         return;
     }
     if (line == "wifi status") { Serial.println(netStatus()); return; }
+
+    if (line.startsWith("wifi ip")) {
+        String a[4];
+        String rest = line.substring(7);
+        rest.trim();
+        for (int i = 0; i < 4 && rest.length(); i++) {
+            int sp = rest.indexOf(' ');
+            a[i] = sp < 0 ? rest : rest.substring(0, sp);
+            rest = sp < 0 ? String("") : rest.substring(sp + 1);
+            rest.trim();
+        }
+        if (!a[0].length()) { Serial.println(netAddrJson()); return; }
+        if (a[0] == "dhcp") a[0] = "";
+        String err = netSetStatic(a[0], a[1], a[2], a[3]);
+        if (err.length()) { Serial.printf("не принято: %s\n", err.c_str()); return; }
+        cfgSave();
+        if (cfg().sip.length())
+            Serial.printf("адрес %s, шлюз %s, маска %s — перезагрузка\n",
+                          cfg().sip.c_str(), cfg().sgw.c_str(), cfg().smask.c_str());
+        else
+            Serial.println("адрес снова от DHCP — перезагрузка");
+        bootMark("смена адреса");
+        delay(300); ESP.restart();
+    }
 
     if (line.startsWith("wifi set ")) {
         String rest = line.substring(9);

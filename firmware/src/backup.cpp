@@ -10,6 +10,7 @@
 #include "backup.h"
 #include "cfg.h"
 #include "json.h"
+#include "net.h"
 #include "ota.h"
 #include <Preferences.h>
 #include <time.h>
@@ -54,6 +55,8 @@ String backupJson() {
     j = "{\"v\":\"1\",\"made\":\"" + String((uint32_t)time(nullptr)) + "\",\"fw\":\"" + jsonEsc(fwBuild()) + "\",\"cfg\":{";
     bool f = true;
     kv(j, f, "ssid", c.ssid);         kv(j, f, "wpass", c.pass);
+    kv(j, f, "sip", c.sip);           kv(j, f, "sgw", c.sgw);
+    kv(j, f, "smask", c.smask);       kv(j, f, "sdns", c.sdns);
     kv(j, f, "bmsMac", c.bmsMac);     kv(j, f, "invMac", c.invMac);
     kv(j, f, "tgToken", c.tgToken);   kv(j, f, "tgChat", c.tgChat);    kv(j, f, "tgLow", String(c.tgSocLow));
     kv(j, f, "lat", String(c.lat, 5)); kv(j, f, "lon", String(c.lon, 5));
@@ -140,6 +143,16 @@ String backupRestore(const String& s) {
     String v;
     if (cfgVal(s, cf, cfEnd, "ssid", v))    c.ssid = v;
     if (cfgVal(s, cf, cfEnd, "wpass", v))   c.pass = v;
+    // Адрес — только целиком и только проверенный: кривой сделал бы модуль
+    // недоступным сразу после восстановления. Копии без него адрес не трогают.
+    if (cfgVal(s, cf, cfEnd, "sip", v)) {
+        String gw, mask, dns;
+        cfgVal(s, cf, cfEnd, "sgw", gw);
+        cfgVal(s, cf, cfEnd, "smask", mask);
+        cfgVal(s, cf, cfEnd, "sdns", dns);
+        String err = netSetStatic(v, gw, mask, dns);
+        if (err.length()) Serial.printf("[копия] адрес из копии не принят: %s\n", err.c_str());
+    }
     if (cfgVal(s, cf, cfEnd, "bmsMac", v))  c.bmsMac = v;
     if (cfgVal(s, cf, cfEnd, "invMac", v))  c.invMac = v;
     if (cfgVal(s, cf, cfEnd, "tgToken", v)) c.tgToken = v;

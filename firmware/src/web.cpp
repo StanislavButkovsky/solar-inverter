@@ -142,7 +142,7 @@ static String jsonState() {
     j += "},";
 
     j += "\"wifi\":{\"ip\":\"" + jsonEsc(netIp()) + "\",\"status\":\"" + jsonEsc(netStatus()) +
-         "\",\"ap\":" + String(netIsAp() ? "true" : "false") + "},";
+         "\",\"ap\":" + String(netIsAp() ? "true" : "false") + ",\"addr\":" + netAddrJson() + "},";
     j += "\"sim\":" + String(simEnabled() ? "true" : "false");
     j += ",\"fw\":\"" + String(fwBuild()) + "\",\"otaPass\":" + String(otaPasswordSet() ? "true" : "false");
     j += ",\"tg\":" + tgStateJson();
@@ -231,6 +231,17 @@ void webStart() {
 
     server.on("/api/config", HTTP_GET, []() {
         if (denied()) return;
+        // Адрес: ip пустой — DHCP. Проверяется до всего остального: неверный
+        // адрес сделал бы модуль недоступным, поэтому при ошибке — ничего не
+        // сохраняем и не перезагружаемся.
+        if (server.hasArg("ip")) {
+            String err = netSetStatic(server.arg("ip"), server.arg("gw"), server.arg("mask"), server.arg("dns"));
+            if (err.length()) {                     // cfg() при отказе не тронут
+                server.send(200, "application/json; charset=utf-8",
+                            "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}");
+                return;
+            }
+        }
         if (server.hasArg("ssid"))   cfg().ssid   = server.arg("ssid");
         if (server.hasArg("pass"))   cfg().pass   = server.arg("pass");
         if (server.hasArg("bmsmac")) cfg().bmsMac = server.arg("bmsmac");

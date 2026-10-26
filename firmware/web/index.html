@@ -670,8 +670,35 @@ body.light pre.rep { background: #f2f4f8; }
       <input id="ssid" autocapitalize="off" autocorrect="off" autocomplete="off">
       <label>Пароль</label>
       <input id="pass" type="password" autocomplete="off">
-      <div style="margin-top:16px">
-        <button class="wide accent" onclick="saveCfg()">Сохранить и перезагрузить</button>
+      <h2 style="margin-top:22px">Адрес модуля</h2>
+      <div class="sub">
+        Обычно адрес выдаёт роутер, и после переподключения он может смениться.
+        Если на роутере его не закрепить, задайте здесь — вместе с сетью или
+        отдельно, кнопкой ниже. Поля заполнены нынешними значениями. Берите адрес вне
+        диапазона, который раздаёт роутер (например, ближе к концу: …200),
+        иначе он достанется кому-то ещё.
+      </div>
+      <label>Как получать адрес</label>
+      <select id="ip_mode" onchange="ipModeChanged()">
+        <option value="dhcp">Автоматически от роутера (DHCP)</option>
+        <option value="static">Задать вручную</option>
+      </select>
+      <div id="ip_fields" class="hidden">
+        <label>Адрес модуля</label>
+        <input id="ip_ip" inputmode="decimal" autocomplete="off" placeholder="192.168.1.200">
+        <label>Шлюз — адрес роутера</label>
+        <input id="ip_gw" inputmode="decimal" autocomplete="off" placeholder="192.168.1.1">
+        <label>Маска</label>
+        <input id="ip_mask" inputmode="decimal" autocomplete="off" placeholder="255.255.255.0">
+        <label>DNS (пусто — как шлюз)</label>
+        <input id="ip_dns" inputmode="decimal" autocomplete="off" placeholder="">
+      </div>
+      <div style="margin-top:12px">
+        <button class="wide" onclick="saveIp()">Изменить только адрес (сеть та же)</button>
+      </div>
+      <div id="ip_msg" class="sub" style="margin-top:8px"></div>
+      <div style="margin-top:18px">
+        <button class="wide accent" onclick="saveCfg()">Сохранить сеть и адрес, перезагрузить</button>
       </div>
     </div></div>
   </div>
@@ -1400,7 +1427,8 @@ function render(s) {
 
   /* --- настройки --- */
   $("s_wifi").innerHTML = s.wifi.status;
-  $("s_ip").innerHTML   = s.wifi.ip;
+  $("s_ip").innerHTML   = s.wifi.ip + (s.wifi.addr && s.wifi.addr.static ? ' <span class="sub">(задан вручную)</span>' : '');
+  if (s.wifi.addr) fillIp(s.wifi.addr);
   $("s_mac").innerHTML  = l.mac || "не привязана";
   $("s_rssi").innerHTML = l.rssi ? (bars(l.rssi, true) + l.rssi + " дБм") : "—";
   $("s_ok").innerHTML   = l.ok;
@@ -1530,9 +1558,10 @@ function pickNet(name) { $("ssid").value = name; $("pass").focus(); }
 
 function saveCfg() {
   if (!$("ssid").value) { alert("Введите имя сети"); return; }
+  if ($("ip_mode").value === "static" && !$("ip_ip").value.trim()) { alert("Введите адрес модуля или выберите «Автоматически»"); return; }
   var name = $("ssid").value;
   var u = "/api/config?ssid=" + encodeURIComponent(name) +
-          "&pass=" + encodeURIComponent($("pass").value) + mp("mp_net");
+          "&pass=" + encodeURIComponent($("pass").value) + ipQuery() + mp("mp_net");
   // Отказ (нет пароля модуля) приходит ответом; успех — тоже, но модуль сразу
   // уходит в перезагрузку, и ответ может не дойти: молчание считаем успехом.
   get(u, function (r) { if (r.ok === false) alert(r.error); else cfgSaved(name); }, function () { cfgSaved(name); });
@@ -1543,8 +1572,12 @@ function cfgSaved(name) {
   $("saved").getElementsByTagName("div")[0].innerHTML =
     '<div class="card" style="border-color:#2a5ce0">' +
     '<h2>Модуль перезагружается</h2>' +
-    '<p>Он подключится к сети <b>' + name + '</b> и получит новый адрес. ' +
-    'Эта вкладка больше не откроется — адрес был старый.</p>' +
+    ($("ip_mode").value === "static"
+      ? '<p>Он подключится к сети <b>' + name + '</b> с адресом <b>' + $("ip_ip").value.trim() + '</b>. ' +
+        'Через ~20 с откройте <a href="http://' + $("ip_ip").value.trim() + '">http://' + $("ip_ip").value.trim() + '</a>. ' +
+        'Если не открывается — адрес не подошёл к сети; способы ниже.</p>'
+      : '<p>Он подключится к сети <b>' + name + '</b> и получит новый адрес. ' +
+        'Эта вкладка больше не откроется — адрес был старый.</p>') +
     '<p><b>Как узнать новый адрес, любым из способов:</b></p>' +
     '<ol style="padding-left:20px;line-height:1.9">' +
     '<li>Подключиться телефоном к сети <b>solar-setup</b> (пароль <b>12345678</b>) ' +
@@ -1558,6 +1591,42 @@ function cfgSaved(name) {
     '</div>';
   show("saved", true);
   window.scrollTo(0, 0);
+}
+
+// Поля адреса заполняются один раз — тем, что задано, или тем, что сейчас
+// выдал роутер: закрепить нынешний адрес — выбрать «вручную» и сохранить.
+var ipFilled = false;
+function fillIp(a) {
+  if (ipFilled || !a.ip) return;
+  ipFilled = true;
+  $("ip_mode").value = a.static ? "static" : "dhcp";
+  $("ip_ip").value = a.ip; $("ip_gw").value = a.gw; $("ip_mask").value = a.mask; $("ip_dns").value = a.dns;
+  ipModeChanged();
+}
+function ipModeChanged() { show("ip_fields", $("ip_mode").value === "static"); }
+// Параметры адреса для /api/config. Пустой ip — DHCP. Пока поля не
+// заполнились с модуля, адрес не трогаем вовсе — не сбросить заданный вслепую.
+function ipQuery() {
+  var st = $("ip_mode").value === "static";
+  if (!st && !ipFilled) return "";
+  return "&ip=" + (st ? encodeURIComponent($("ip_ip").value.trim()) +
+         "&gw=" + encodeURIComponent($("ip_gw").value.trim()) +
+         "&mask=" + encodeURIComponent($("ip_mask").value.trim()) +
+         "&dns=" + encodeURIComponent($("ip_dns").value.trim()) : "");
+}
+function saveIp() {
+  var st = $("ip_mode").value === "static";
+  var ip = $("ip_ip").value.trim();
+  if (st && !ip) { $("ip_msg").innerHTML = "Введите адрес модуля"; return; }
+  var u = "/api/config?x=1" + ipQuery() + mp("mp_net");
+  var next = st ? "http://" + ip : "адрес, который выдаст роутер (список клиентов роутера или http://solar.local)";
+  var done = function () {
+    $("ip_msg").innerHTML = "Сохранено, модуль перезагружается. Через ~20 с откройте " +
+      (st ? '<a href="' + next + '">' + next + '</a>' : next) + ".";
+  };
+  // Отказ (неверный адрес, нет пароля модуля) приходит ответом; при успехе
+  // модуль сразу уходит в перезагрузку и ответ может не дойти.
+  get(u, function (r) { if (r.ok === false) $("ip_msg").innerHTML = r.error; else done(); }, done);
 }
 
 var busyRadio = false;

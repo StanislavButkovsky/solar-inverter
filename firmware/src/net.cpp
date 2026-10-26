@@ -48,6 +48,64 @@ static const char* wifiWhy() {
     }
 }
 
+// Свой адрес вместо DHCP. Применяется перед каждым WiFi.begin(): сброс
+// интерфейса при повторе (disconnect с выключением) настройку забывает.
+static uint32_t be32(const IPAddress& a) {
+    return ((uint32_t)a[0] << 24) | ((uint32_t)a[1] << 16) | ((uint32_t)a[2] << 8) | a[3];
+}
+
+static void staBegin() {
+    IPAddress ip, gw, mask, dns;
+    if (cfg().sip.length() && ip.fromString(cfg().sip) && gw.fromString(cfg().sgw) &&
+        mask.fromString(cfg().smask)) {
+        if (!dns.fromString(cfg().sdns)) dns = gw;
+        // Второй DNS — общий: DNS роутера бывает капризен, а без имён нет ни
+        // бота, ни погоды, ни NTP.
+        if (!WiFi.config(ip, gw, mask, dns, IPAddress(8, 8, 8, 8)))
+            Serial.println("[net] свой адрес не применился, будет DHCP");
+    }
+    WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
+}
+
+String netSetStatic(const String& sip, const String& sgw, const String& smask, const String& sdns) {
+    if (!sip.length()) {
+        cfg().sip = cfg().sgw = cfg().smask = cfg().sdns = "";
+        return "";
+    }
+    IPAddress ip, gw, mask, dns;
+    if (!ip.fromString(sip))  return "адрес модуля не похож на IP: " + sip;
+    if (!gw.fromString(sgw))  return "нужен шлюз — адрес роутера, обычно x.x.x.1";
+    if (!mask.fromString(smask.length() ? smask : String("255.255.255.0")))
+        return "маска не похожа на IP: " + smask;
+    if (sdns.length() && !dns.fromString(sdns)) return "DNS не похож на IP: " + sdns;
+
+    uint32_t i = be32(ip), g = be32(gw), m = be32(mask);
+    if (m == 0 || (~m & (~m + 1)) != 0) return "маска неверная: единицы должны идти подряд";
+    // Ошибка здесь не лечится сама: модуль войдёт в Wi-Fi, точку доступа
+    // не поднимет, а достучаться до него будет нельзя. Поэтому строго.
+    if ((i & m) != (g & m)) return "адрес и шлюз из разных подсетей — модуль станет недоступен";
+    if (i == g)             return "адрес совпадает со шлюзом";
+    if ((i & ~m) == 0 || (i & ~m) == ~m) return "это адрес самой подсети или широковещательный";
+
+    cfg().sip   = ip.toString();
+    cfg().sgw   = gw.toString();
+    cfg().smask = mask.toString();
+    cfg().sdns  = sdns.length() ? dns.toString() : String("");
+    return "";
+}
+
+String netAddrJson() {
+    // Свой адрес — из настроек; без него — то, что выдал DHCP: страница
+    // подставляет это в поля, и закрепить нынешний адрес — одна кнопка.
+    bool st = cfg().sip.length() > 0, up = WiFi.status() == WL_CONNECTED;
+    String ip   = st ? cfg().sip   : up ? WiFi.localIP().toString()  : String("");
+    String gw   = st ? cfg().sgw   : up ? WiFi.gatewayIP().toString() : String("");
+    String mask = st ? cfg().smask : up ? WiFi.subnetMask().toString() : String("");
+    String dns  = st ? cfg().sdns  : String("");
+    return "{\"static\":" + String(st ? "true" : "false") + ",\"ip\":\"" + ip + "\",\"gw\":\"" + gw +
+           "\",\"mask\":\"" + mask + "\",\"dns\":\"" + dns + "\"}";
+}
+
 static void startNtp() {
     static bool done = false;
     if (done) return;
@@ -95,7 +153,7 @@ void netStart() {
     }
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
+    staBegin();
     Serial.printf("[net] подключаюсь к \"%s\"", cfg().ssid.c_str());
 
     uint32_t t0 = millis();
@@ -132,7 +190,7 @@ void netStart() {
     Serial.printf("[net] подключиться не удалось: %s\n", wifiWhy());
     raiseAp(true);                 // AP для настройки + STA продолжает пытаться
     s_lastRetry = millis();
-    WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
+    staBegin();
 }
 
 void netLoop() {
@@ -191,7 +249,7 @@ void netLoop() {
         WiFi.disconnect(true, false);
         delay(120);
         WiFi.mode(s_apUp ? WIFI_AP_STA : WIFI_STA);
-        WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
+        staBegin();
 
         // Если и это не помогает — перезагрузка. На свежей загрузке модуль
         // в сеть входит, это проверено; значит застревает именно драйвер,
@@ -307,7 +365,8 @@ String netIp() {
 
 String netStatus() {
     if (WiFi.status() == WL_CONNECTED) {
-        String s = "клиент сети " + WiFi.SSID() + ", RSSI " + String(WiFi.RSSI()) + " дБм";
+        String s = "клиент сети " + WiFi.SSID() + ", RSSI " + String(WiFi.RSSI()) + " дБм" +
+                   (cfg().sip.length() ? ", адрес задан вручную" : "");
         if (s_apUp) s += s_apForced ? " (точка доступа поднята кнопкой)"
                                     : " (точка доступа ещё открыта)";
         return s;

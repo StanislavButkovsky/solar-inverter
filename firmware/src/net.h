@@ -13,3 +13,9 @@ bool   netToggleAp();      // кнопка: включить или выключ
 bool   netApActive();      // точка доступа сейчас поднята
 void   netScanStart();
 String netScanJson();
+
+// Свой адрес вместо DHCP. Пустой ip — вернуть DHCP. Проверяет, что адрес и
+// шлюз из одной подсети, и пишет в cfg(); сохранить и перезагрузить — вызывающему.
+// Пустая строка — принято, иначе — что не так.
+String netSetStatic(const String& ip, const String& gw, const String& mask, const String& dns);
+String netAddrJson();      // {"static":…,"ip","gw","mask","dns"} — для страницы
