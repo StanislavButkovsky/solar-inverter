@@ -1564,7 +1564,9 @@ function saveCfg() {
           "&pass=" + encodeURIComponent($("pass").value) + ipQuery() + mp("mp_net");
   // Отказ (нет пароля модуля) приходит ответом; успех — тоже, но модуль сразу
   // уходит в перезагрузку, и ответ может не дойти: молчание считаем успехом.
-  get(u, function (r) { if (r.ok === false) alert(r.error); else cfgSaved(name); }, function () { cfgSaved(name); });
+  get(u, function (r) {
+    if (r.ok === false) { $("ip_msg").innerHTML = r.error; alert(r.error); } else cfgSaved(name);
+  }, function () { cfgSaved(name); });
 }
 function cfgSaved(name) {
   // Дальше модуль уедет в другую сеть и эта вкладка умрёт. Объясняем заранее,
@@ -1606,17 +1608,24 @@ function fillIp(a) {
 function ipModeChanged() { show("ip_fields", $("ip_mode").value === "static"); }
 // Параметры адреса для /api/config. Пустой ip — DHCP. Пока поля не
 // заполнились с модуля, адрес не трогаем вовсе — не сбросить заданный вслепую.
+// Клавиатура Android в русской раскладке ставит запятую вместо точки —
+// исправляем прямо в поле, чтобы человек видел, что уйдёт на модуль.
+function ipVal(id) {
+  var v = $(id).value.replace(/,/g, ".").replace(/\s+/g, "");
+  $(id).value = v;
+  return v;
+}
 function ipQuery() {
   var st = $("ip_mode").value === "static";
   if (!st && !ipFilled) return "";
-  return "&ip=" + (st ? encodeURIComponent($("ip_ip").value.trim()) +
-         "&gw=" + encodeURIComponent($("ip_gw").value.trim()) +
-         "&mask=" + encodeURIComponent($("ip_mask").value.trim()) +
-         "&dns=" + encodeURIComponent($("ip_dns").value.trim()) : "");
+  return "&ip=" + (st ? encodeURIComponent(ipVal("ip_ip")) +
+         "&gw=" + encodeURIComponent(ipVal("ip_gw")) +
+         "&mask=" + encodeURIComponent(ipVal("ip_mask")) +
+         "&dns=" + encodeURIComponent(ipVal("ip_dns")) : "");
 }
 function saveIp() {
   var st = $("ip_mode").value === "static";
-  var ip = $("ip_ip").value.trim();
+  var ip = ipVal("ip_ip");
   if (st && !ip) { $("ip_msg").innerHTML = "Введите адрес модуля"; return; }
   var u = "/api/config?x=1" + ipQuery() + mp("mp_net");
   var next = st ? "http://" + ip : "адрес, который выдаст роутер (список клиентов роутера или http://solar.local)";

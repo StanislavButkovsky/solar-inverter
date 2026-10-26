@@ -67,7 +67,17 @@ static void staBegin() {
     WiFi.begin(cfg().ssid.c_str(), cfg().pass.c_str());
 }
 
-String netSetStatic(const String& sip, const String& sgw, const String& smask, const String& sdns) {
+// Цифровая клавиатура Android в русской раскладке ставит запятую вместо
+// точки: «192,168,1,200» 26.10.2026 молча оставило модуль на DHCP.
+static String ipNorm(String s) {
+    s.trim();
+    s.replace(",", ".");
+    s.replace(" ", "");
+    return s;
+}
+
+String netSetStatic(const String& sip0, const String& sgw0, const String& smask0, const String& sdns0) {
+    String sip = ipNorm(sip0), sgw = ipNorm(sgw0), smask = ipNorm(smask0), sdns = ipNorm(sdns0);
     if (!sip.length()) {
         cfg().sip = cfg().sgw = cfg().smask = cfg().sdns = "";
         return "";
