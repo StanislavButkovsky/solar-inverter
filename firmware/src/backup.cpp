@@ -59,6 +59,7 @@ String backupJson() {
     kv(j, f, "smask", c.smask);       kv(j, f, "sdns", c.sdns);
     kv(j, f, "bmsMac", c.bmsMac);     kv(j, f, "invMac", c.invMac);
     kv(j, f, "tgToken", c.tgToken);   kv(j, f, "tgChat", c.tgChat);    kv(j, f, "tgLow", String(c.tgSocLow));
+    kv(j, f, "mxToken", c.mxToken);   kv(j, f, "mxChat", c.mxChat);
     kv(j, f, "lat", String(c.lat, 5)); kv(j, f, "lon", String(c.lon, 5));
     kv(j, f, "kwp", String(c.pvKwp, 2)); kv(j, f, "price", String(c.price, 2));
     kv(j, f, "autoOn", c.autoOn ? "1" : "0"); kv(j, f, "autoBelow", String(c.autoBelow, 1));
@@ -157,6 +158,8 @@ String backupRestore(const String& s) {
     if (cfgVal(s, cf, cfEnd, "invMac", v))  c.invMac = v;
     if (cfgVal(s, cf, cfEnd, "tgToken", v)) c.tgToken = v;
     if (cfgVal(s, cf, cfEnd, "tgChat", v))  c.tgChat = v;
+    if (cfgVal(s, cf, cfEnd, "mxToken", v)) c.mxToken = v;
+    if (cfgVal(s, cf, cfEnd, "mxChat", v))  c.mxChat = v;
     auto num = [&](const char* k, float lo, float hi, float& dst) {
         String t;
         if (!cfgVal(s, cf, cfEnd, k, t) || !t.length()) return;

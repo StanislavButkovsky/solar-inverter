@@ -10,7 +10,7 @@
 ## Карта
 
 ```
-firmware/src/   main · cfg (NVS) · net · web (HTTP API) · stats (LittleFS) · tg (бот)
+firmware/src/   main · cfg (NVS) · net · web (HTTP API) · stats (LittleFS) · tg (бот: Telegram и MAX)
                 weather (прогноз, ночная зарядка) · bootlog · ota · rtc (DS3231) · cli
                 schedule (расписание режимов) · battlife (износ) · pace (BMS по RS485)
                 battsoc (свой счёт заряда, пороги BMS) · tg_none / daly_none — заглушки сборок без бота / BLE
@@ -92,6 +92,9 @@ python3 scripts/ota_upload.py 192.168.1.200 '<пароль модуля>' .pio/b
   новая помечает себя годной, только проработав 90 с. 23.10.2026 проверка
   восстановления из копии (с перезагрузкой) через 40 с после заливки
   вернула старую сборку — ручки не нашлись (404). После OTA ждать > 90 с.
+* **MAX — только `platform-api.max.ru`.** Сертификат `platform-api2`
+  (Минцифры, ОГРН/ИНН как NumericString) mbedTLS не разбирает — подробно в
+  `tg_roots.h`. Не «чинить» на api2 по документации MAX.
 * **Строки в JSON** — только через `jsonEsc`: имя сети с кавычками уже раз
   ломало страницу.
 * **Задача бота ≠ loop().** Команды бота ставят флаг, действие — в

@@ -651,7 +651,7 @@ body.light pre.rep { background: #f2f4f8; }
             onclick="setTab('auto')" id="tb_auto">Авто</button><button
             onclick="setTab('batt')" id="tb_batt">Батарея</button><button
             onclick="setTab('net')"  id="tb_net">Сеть</button><button
-            onclick="setTab('tg')"   id="tb_tg">Telegram</button><button
+            onclick="setTab('tg')"   id="tb_tg">Бот</button><button
             onclick="setTab('sys')"  id="tb_sys">Модуль</button>
   </div>
 
@@ -937,29 +937,71 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="tg">
     <div class="col c1"><div class="card">
+      <h2>Уведомления</h2>
+      <div class="sub" style="margin-bottom:10px">Бот пишет в Telegram, в MAX или в оба сразу —
+        включите нужные ниже. Уведомления уходят во все включённые, ответ на команду — туда,
+        откуда спросили.</div>
+      <label>Батарея разряжена — ниже, %</label>
+      <input id="tg_low" type="number" min="5" max="90">
+      <label class="tg_passrow">Пароль модуля (тот же, что для прошивки)</label>
+      <input id="tg_pass" class="tg_passrow" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="tgLowSave()">Сохранить порог</button></div>
+      <div class="sub" id="tg_lowmsg" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px;line-height:1.6">
+        Пишет: сеть пропала и вернулась, батарея ниже порога, авария, нет связи
+        с инвертором, сводка в 21:00. Команды: /status /today /outages /help.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="tg">
+    <div class="col c1"><div class="card">
       <h2>Telegram <span id="tg_chip" class="chip gray">—</span></h2>
       <div class="sub" id="tg_hint" style="margin-bottom:10px"></div>
       <div id="tg_code" class="hidden" style="font-size:28px;font-weight:600;letter-spacing:.15em;margin:6px 0 10px"></div>
       <label>Токен бота от @BotFather</label>
       <input id="tg_token" type="password" autocomplete="off" placeholder="123456789:AA…">
-      <label>Батарея разряжена — ниже, %</label>
-      <input id="tg_low" type="number" min="5" max="90">
-      <label class="tg_passrow">Пароль модуля (тот же, что для прошивки)</label>
-      <input id="tg_pass" class="tg_passrow" type="password" autocomplete="current-password">
       <div style="margin-top:12px">
-        <button class="wide accent" onclick="tgSave()">Сохранить</button>
+        <button class="wide accent" onclick="chSave('tg')">Сохранить токен</button>
       </div>
       <div style="margin-top:8px">
-        <button onclick="tgCmd('test=1')">Прислать проверку</button>
-        <button onclick="tgCmd('unbind=1')">Отвязать чат</button>
+        <button onclick="chCmd('tg', 'test=1')">Прислать проверку</button>
+        <button onclick="chCmd('tg', 'unbind=1')">Отвязать чат</button>
+        <button onclick="chOff('tg')">Выключить</button>
       </div>
       <div class="sub" id="tg_msg" style="margin-top:8px"></div>
       <div class="sub" style="margin-top:8px;line-height:1.6">
         Как завести бота: в Telegram найдите @BotFather → /newbot → имя → получите
         токен и вставьте сюда. Потом отправьте своему боту /start и код, который
-        появится выше. Модулю нужен интернет через домашнюю сеть.<br>
-        Пишет: сеть пропала и вернулась, батарея ниже порога, авария, нет связи
-        с инвертором, сводка в 21:00. Команды: /status /today /outages.
+        появится выше. Модулю нужен интернет через домашнюю сеть. Таблицу
+        статистики и резервную копию файлом бот присылает только в Telegram.
+      </div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="tg">
+    <div class="col c1"><div class="card">
+      <h2>MAX <span id="mx_chip" class="chip gray">—</span></h2>
+      <div class="sub" id="mx_hint" style="margin-bottom:10px"></div>
+      <div id="mx_code" class="hidden" style="font-size:28px;font-weight:600;letter-spacing:.15em;margin:6px 0 10px"></div>
+      <label>Токен бота MAX</label>
+      <input id="mx_token" type="password" autocomplete="off" placeholder="токен из настроек бота">
+      <div style="margin-top:12px">
+        <button class="wide accent" onclick="chSave('mx')">Сохранить токен</button>
+      </div>
+      <div style="margin-top:8px">
+        <button onclick="chCmd('mx', 'test=1')">Прислать проверку</button>
+        <button onclick="chCmd('mx', 'unbind=1')">Отвязать чат</button>
+        <button onclick="chOff('mx')">Выключить</button>
+      </div>
+      <div class="sub" id="mx_msg" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px;line-height:1.6">
+        Как завести бота: MAX даёт ботов только юрлицам, ИП и самозанятым —
+        профиль на business.max.ru, раздел «Чат-боты» → «Создать». Бот проходит
+        модерацию (до 48 часов по рабочим дням), после неё токен — в настройках
+        бота, «Токен бота». Вставьте его сюда, найдите бота в MAX, нажмите
+        «Начать» и отправьте код, который появится выше (можно с /start).
+        Команды те же, что в Telegram; файлов бот MAX не присылает.
       </div>
     </div></div>
   </div>
@@ -1833,8 +1875,32 @@ function invSet(what) {
   });
 }
 
-/* ----------------------------------------- telegram */
+/* ----------------------------------------- бот: Telegram и MAX */
 var tgLowSet = false;
+// Карточка канала: p — префикс полей (tg / mx), t — его состояние из /api/state.
+function chRender(p, name, t, net) {
+  show(p + "_code", t.on && !t.chat && !!t.code);
+  if (!t.on) {
+    chip(p + "_chip", "gray", "выключен");
+    $(p + "_hint").innerHTML = "Вставьте токен бота, чтобы получать уведомления в " + name + ".";
+  } else if (!net) {
+    chip(p + "_chip", "amber", "нет сети");
+    $(p + "_hint").innerHTML = "Модуль не в домашней сети — до " + name + " не достучаться.";
+  } else if (t.err) {
+    chip(p + "_chip", "red", "ошибка");
+    $(p + "_hint").innerHTML = t.err;
+  } else if (!t.bot) {
+    chip(p + "_chip", "amber", "подключается");
+    $(p + "_hint").innerHTML = "Модуль проверяет токен — несколько секунд.";
+  } else if (!t.chat) {
+    chip(p + "_chip", "amber", "ждёт привязки");
+    $(p + "_hint").innerHTML = "Отправьте боту " + t.bot + " команду /start и этот код:";
+    $(p + "_code").innerHTML = "/start " + t.code;
+  } else {
+    chip(p + "_chip", "green", "работает");
+    $(p + "_hint").innerHTML = "Бот " + t.bot + " привязан к вашему чату.";
+  }
+}
 function tgRender(s) {
   var t = s.tg;
   if (!t) return;
@@ -1845,36 +1911,27 @@ function tgRender(s) {
   if (!tgLowSet && document.activeElement !== low) { low.value = t.low; tgLowSet = true; }
   var rows = document.querySelectorAll(".tg_passrow");
   for (var i = 0; i < rows.length; i++) rows[i].style.display = s.otaPass ? "" : "none";
-  show("tg_code", t.on && !t.chat && !!t.code);
-  if (!t.on) {
-    chip("tg_chip", "gray", "выключен");
-    $("tg_hint").innerHTML = "Вставьте токен бота, чтобы получать уведомления.";
-  } else if (!t.net) {
-    chip("tg_chip", "amber", "нет сети");
-    $("tg_hint").innerHTML = "Модуль не в домашней сети — до Telegram не достучаться.";
-  } else if (t.err) {
-    chip("tg_chip", "red", "ошибка");
-    $("tg_hint").innerHTML = t.err;
-  } else if (!t.chat) {
-    chip("tg_chip", "amber", "ждёт привязки");
-    $("tg_hint").innerHTML = "Отправьте боту " + (t.bot || "") + " команду /start и этот код:";
-    $("tg_code").innerHTML = "/start " + t.code;
-  } else {
-    chip("tg_chip", "green", "работает");
-    $("tg_hint").innerHTML = "Бот " + t.bot + " привязан к вашему чату.";
-  }
+  chRender("tg", "Telegram", t, t.net);
+  if (t.max) chRender("mx", "MAX", t.max, t.net);
 }
-function tgCmd(q) {
-  get("/api/tg?" + q + "&pass=" + encodeURIComponent($("tg_pass").value), function (r) {
-    $("tg_msg").innerHTML = r.ok ? "готово" : (r.error || "не вышло");
-  }, function () { $("tg_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
+function chCmd(p, q, msgId) {
+  var m = msgId || (p + "_msg");
+  get("/api/tg?ch=" + (p === "mx" ? "max" : "tg") + "&" + q + "&pass=" + encodeURIComponent($("tg_pass").value),
+    function (r) { $(m).innerHTML = r.ok ? "готово" : (r.error || "не вышло"); },
+    function () { $(m).innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }
-function tgSave() {
-  var q = "low=" + encodeURIComponent($("tg_low").value);
-  var tok = $("tg_token").value;
-  if (tok) q += "&token=" + encodeURIComponent(tok);
-  tgCmd(q);
-  $("tg_token").value = "";
+function chSave(p) {
+  var tok = $(p + "_token").value.trim();
+  if (!tok) { $(p + "_msg").innerHTML = "вставьте токен"; return; }
+  chCmd(p, "token=" + encodeURIComponent(tok));
+  $(p + "_token").value = "";
+}
+function chOff(p) {
+  if (!confirm("Выключить бота " + (p === "mx" ? "MAX" : "Telegram") + "? Токен и привязка сотрутся.")) return;
+  chCmd(p, "token=");
+}
+function tgLowSave() {
+  chCmd("tg", "low=" + encodeURIComponent($("tg_low").value), "tg_lowmsg");
   tgLowSet = false;
 }
 

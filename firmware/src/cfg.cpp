@@ -20,6 +20,8 @@ void cfgInit() {
     g_cfg.apAfterSave = prefs.getBool("apafter", false);
     g_cfg.tgToken = prefs.getString("tgtoken", "");
     g_cfg.tgChat  = prefs.getString("tgchat", "");
+    g_cfg.mxToken = prefs.getString("mxtoken", "");
+    g_cfg.mxChat  = prefs.getString("mxchat", "");
     g_cfg.tgSocLow = prefs.getUChar("tgsoclow", 20);
     g_cfg.lat       = prefs.getFloat("lat", 0);
     g_cfg.lon       = prefs.getFloat("lon", 0);
@@ -53,6 +55,8 @@ void cfgSave() {
     prefs.putBool("apafter", g_cfg.apAfterSave);
     prefs.putString("tgtoken", g_cfg.tgToken);
     prefs.putString("tgchat", g_cfg.tgChat);
+    prefs.putString("mxtoken", g_cfg.mxToken);
+    prefs.putString("mxchat", g_cfg.mxChat);
     prefs.putUChar("tgsoclow", g_cfg.tgSocLow);
     prefs.putFloat("lat", g_cfg.lat);
     prefs.putFloat("lon", g_cfg.lon);

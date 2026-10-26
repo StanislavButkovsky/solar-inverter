@@ -15,6 +15,7 @@
 #include "battlife.h"
 #include "pace.h"
 #include "backup.h"
+#include "json.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -23,20 +24,34 @@
 static const uint32_t LINK_LOST_MS = 5UL * 60 * 1000;
 static const uint32_t POLL_MS = 15000;           // команды доходят за 15 с
 
-static QueueHandle_t s_q = nullptr;              // char* из strdup, освобождает задача
-static volatile bool s_testReq = false;
-static String   s_bot;                           // @имя бота после getMe
-static String   s_err;                           // последняя ошибка — на страницу
-static String   s_code;                          // код привязки, пока чата нет
-static int64_t  s_offset = 0;                    // следующий update_id
+// Два канала доставки — Telegram и MAX (с 26.10.2026). У каждого свой
+// токен, привязанный чат, код привязки и очередь; тексты, тревоги и команды
+// общие. Уведомления уходят во все включённые каналы, ответ на команду — в
+// тот, откуда она пришла. Можно включить один любой или оба.
+enum : uint8_t { CH_TG = 0, CH_MAX = 1, NCH = 2 };
+
+struct Chan {
+    QueueHandle_t q = nullptr;           // char* из strdup, освобождает задача
+    String   bot;                        // @имя бота после getMe / me
+    String   err;                        // последняя ошибка — на страницу
+    String   code;                       // код привязки, пока чата нет
+    int64_t  offset = 0;                 // Telegram — следующий update_id, MAX — marker; 0 — ещё нет
+    bool     greeted = false;
+    volatile bool test = false;
+};
+static Chan s_ch[NCH];
 
 // Токен и чат меняются со страницы (задача веба), а читает их задача бота.
 // String при перезаписи переезжает в памяти — без мьютекса чтение может
 // поймать освобождённый буфер. Поэтому только копии и только под ним.
 static SemaphoreHandle_t s_mx = nullptr;
-static String token() { xSemaphoreTake(s_mx, portMAX_DELAY); String t = cfg().tgToken; xSemaphoreGive(s_mx); return t; }
-static String chatId() { xSemaphoreTake(s_mx, portMAX_DELAY); String c = cfg().tgChat; xSemaphoreGive(s_mx); return c; }
-static void setChat(const String& c) { xSemaphoreTake(s_mx, portMAX_DELAY); cfg().tgChat = c; cfgSave(); xSemaphoreGive(s_mx); }
+static String& tokRef(uint8_t ch)  { return ch == CH_MAX ? cfg().mxToken : cfg().tgToken; }
+static String& chatRef(uint8_t ch) { return ch == CH_MAX ? cfg().mxChat : cfg().tgChat; }
+static String token(uint8_t ch) { xSemaphoreTake(s_mx, portMAX_DELAY); String t = tokRef(ch); xSemaphoreGive(s_mx); return t; }
+static String chatId(uint8_t ch) { xSemaphoreTake(s_mx, portMAX_DELAY); String c = chatRef(ch); xSemaphoreGive(s_mx); return c; }
+static void setChat(uint8_t ch, const String& c) { xSemaphoreTake(s_mx, portMAX_DELAY); chatRef(ch) = c; cfgSave(); xSemaphoreGive(s_mx); }
+static bool anyChat() { return chatId(CH_TG).length() || chatId(CH_MAX).length(); }
+static void notifyCh(uint8_t ch, const String& text);
 
 // ------------------------------------------------------------------ текст
 
@@ -237,6 +252,7 @@ static String monthText(bool full) {
 // Команды бота приходят в его задаче, а файлы статистики читает только
 // loop(): запрос — флагом, текст собирает tgLoop().
 static volatile uint8_t s_reportReq = 0;              // 1 — неделя, 2 — месяц, 3 — батарея
+static volatile uint8_t s_reportCh = CH_TG;           // кто спросил — туда и ответ
 
 String tgReport(uint8_t what) { return what == 1 ? weekText() : what == 2 ? monthText(false) : monthText(true); }
 
@@ -244,7 +260,7 @@ static void reportLoop() {
     uint8_t r = s_reportReq;
     if (!r) return;
     s_reportReq = 0;
-    tgNotify(r == 1 ? weekText() : r == 2 ? monthText(false) : battText());
+    notifyCh(s_reportCh, r == 1 ? weekText() : r == 2 ? monthText(false) : battText());
 }
 
 // Последние отключения — из того же журнала, что на странице.
@@ -278,10 +294,14 @@ static const char* HELP =
 
 // ------------------------------------------------------------------ очередь
 
-void tgNotify(const String& text) {
-    if (!s_q || !s_mx || token().isEmpty() || chatId().isEmpty()) return;
+static void notifyCh(uint8_t ch, const String& text) {
+    if (!s_mx || !s_ch[ch].q || token(ch).isEmpty() || chatId(ch).isEmpty()) return;
     char* p = strdup(text.c_str());
-    if (p && xQueueSend(s_q, &p, 0) != pdTRUE) free(p);
+    if (p && xQueueSend(s_ch[ch].q, &p, 0) != pdTRUE) free(p);
+}
+
+void tgNotify(const String& text) {
+    for (uint8_t ch = 0; ch < NCH; ch++) notifyCh(ch, text);
 }
 
 void tgOutage(bool started, uint32_t seconds) {
@@ -310,7 +330,8 @@ static bool api(WiFiClientSecure& cli, const String& method, const String& body,
     HTTPClient http;
     http.setTimeout(timeoutS * 1000);
     http.setConnectTimeout(8000);
-    if (!http.begin(cli, "https://api.telegram.org/bot" + token() + "/" + method)) { s_err = "не удалось начать запрос"; return false; }
+    String& err = s_ch[CH_TG].err;
+    if (!http.begin(cli, "https://api.telegram.org/bot" + token(CH_TG) + "/" + method)) { err = "не удалось начать запрос"; return false; }
     int code;
     if (body.length()) {
         http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -320,16 +341,63 @@ static bool api(WiFiClientSecure& cli, const String& method, const String& body,
     }
     out = code > 0 ? http.getString() : String();
     http.end();
-    if (code <= 0) { s_err = "нет связи с api.telegram.org (" + HTTPClient::errorToString(code) + ")"; return false; }
-    if (code == 401 || code == 404) { s_err = "токен не подходит"; return false; }
-    if (out.indexOf("\"ok\":true") < 0) { s_err = "ответ " + String(code); return false; }
-    s_err = "";
+    if (code <= 0) { err = "нет связи с api.telegram.org (" + HTTPClient::errorToString(code) + ")"; return false; }
+    if (code == 401 || code == 404) { err = "токен не подходит"; return false; }
+    if (out.indexOf("\"ok\":true") < 0) { err = "ответ " + String(code); return false; }
+    err = "";
     return true;
 }
 
-static void send(WiFiClientSecure& cli, const String& chat, const String& text) {
+// MAX: platform-api.max.ru, токен — в заголовке Authorization (в адресе
+// MAX его больше не принимает), тело — JSON. 200 — успех. Не platform-api2:
+// его сертификат mbedTLS не разбирает (подробно — в tg_roots.h).
+static bool maxApi(WiFiClientSecure& cli, const String& path, const String& json, String& out, uint16_t timeoutS = 15) {
+    String& err = s_ch[CH_MAX].err;
+    HTTPClient http;
+    http.setTimeout(timeoutS * 1000);
+    http.setConnectTimeout(8000);
+    if (!http.begin(cli, "https://platform-api.max.ru" + path)) { err = "не удалось начать запрос"; return false; }
+    http.addHeader("Authorization", token(CH_MAX));
+    int code;
+    if (json.length()) {
+        http.addHeader("Content-Type", "application/json");
+        code = http.POST(json);
+    } else {
+        code = http.GET();
+    }
+    out = code > 0 ? http.getString() : String();
+    http.end();
+    if (code <= 0) {
+        // «connection refused» у HTTPClient — и TCP, и провал TLS: причину знает
+        // только mbedTLS.
+        char tls[80] = "";
+        int te = cli.lastError(tls, sizeof(tls));
+        err = "нет связи с platform-api.max.ru (" + HTTPClient::errorToString(code) +
+              (te ? String(", TLS ") + te + ": " + tls : String("")) + ")";
+        return false;
+    }
+    if (code == 401) { err = "токен не подходит"; return false; }
+    if (code == 429) { err = "MAX просит писать реже (429)"; return false; }
+    if (code != 200) { err = "ответ " + String(code); return false; }
+    err = "";
+    return true;
+}
+
+static void send(uint8_t ch, WiFiClientSecure& cli, const String& chat, const String& text) {
     String out;
-    api(cli, "sendMessage", "chat_id=" + chat + "&text=" + urlenc(text) + "&disable_web_page_preview=1", out);
+    if (ch == CH_TG) {
+        api(cli, "sendMessage", "chat_id=" + chat + "&text=" + urlenc(text) + "&disable_web_page_preview=1", out);
+        return;
+    }
+    // MAX: до 4000 символов; режем по байтам с запасом, не посреди буквы.
+    String t = text;
+    if (t.length() > 3900) {
+        size_t n = 3900;
+        while (n && ((uint8_t)t[n] & 0xC0) == 0x80) n--;
+        t = t.substring(0, n);
+    }
+    maxApi(cli, "/messages?chat_id=" + chat + "&disable_link_preview=true", "{\"text\":\"" + jsonEsc(t) + "\"}", out);
+    vTaskDelay(pdMS_TO_TICKS(550));                // не больше двух сообщений в секунду в один чат
 }
 
 // Таблица статистики файлом. Собирает её loop() — там живёт статистика и её
@@ -343,6 +411,8 @@ static String s_csvCaption, s_docName, s_docType;
 // loop(), отправляет задача бота; по одному за раз.
 static void csvBuild() {
     if (s_csv || (!s_csvReq && !s_bakReq)) return;
+    // Файлы ходят только через Telegram: без него собирать некуда.
+    if (chatId(CH_TG).isEmpty()) { s_csvReq = s_bakReq = false; return; }
     String* c = new String();
     if (s_csvReq) {
         s_csvReq = false;
@@ -384,11 +454,11 @@ static void sendCsv(WiFiClientSecure& cli, const String& chat) {
     HTTPClient http;
     http.setTimeout(30000);
     http.setConnectTimeout(8000);
-    if (!http.begin(cli, "https://api.telegram.org/bot" + token() + "/sendDocument")) return;
+    if (!http.begin(cli, "https://api.telegram.org/bot" + token(CH_TG) + "/sendDocument")) return;
     http.addHeader("Content-Type", "multipart/form-data; boundary=" + bnd);
     int code = http.POST((uint8_t*)body.c_str(), body.length());
     http.end();
-    if (code != 200) s_err = "таблица не ушла: ответ " + String(code);
+    if (code != 200) s_ch[CH_TG].err = "таблица не ушла: ответ " + String(code);
 }
 
 // Строковое поле после ключа: "key":"значение" — без разбора экранирования,
@@ -514,7 +584,7 @@ static void setLoop() {
     if (e.length()) tgNotify("⚙️ Не переключил: " + e);
 }
 
-static void handle(WiFiClientSecure& cli, const String& chat, String text) {
+static void handle(uint8_t ch, WiFiClientSecure& cli, const String& chat, String text) {
     text.trim();
     int sp = text.indexOf(' ');
     String cmd = sp < 0 ? text : text.substring(0, sp);
@@ -528,41 +598,46 @@ static void handle(WiFiClientSecure& cli, const String& chat, String text) {
         cmd = cmd.substring(0, 4);
     }
 
-    String bound = chatId();
+    String bound = chatId(ch);
     if (bound.isEmpty()) {                               // привязки ещё нет
         arg.trim();
-        if (cmd == "/start" && arg == s_code) {
-            setChat(chat);
-            send(cli, chat, String("Привязано. Буду писать сюда.\n\n") + HELP);
+        const String& code = s_ch[ch].code;
+        if ((cmd == "/start" && arg == code) || cmd == code) {
+            setChat(ch, chat);
+            send(ch, cli, chat, String("Привязано. Буду писать сюда.\n\n") + HELP);
         } else {
-            send(cli, chat, "Чтобы привязать бота, отправьте /start и код со страницы модуля.");
+            send(ch, cli, chat, "Чтобы привязать бота, отправьте /start и код со страницы модуля.");
         }
         return;
     }
     if (chat != bound) return;                           // чужие чаты — молча мимо
 
-    if (cmd == "/status" || cmd == "/start") send(cli, chat, statusText());
-    else if (cmd == "/today")   send(cli, chat, todayText());
-    else if (cmd == "/outages") send(cli, chat, outagesText());
-    else if (cmd == "/boots")   send(cli, chat, "🔁 " + bootText());
-    else if (cmd == "/settings") send(cli, chat, invSettingsText() + "\nМенять — на странице модуля: «Настройки» → «Инвертор».");
-    else if (cmd == "/schedule") send(cli, chat, schedText());
-    else if (cmd == "/week")    s_reportReq = 1;
-    else if (cmd == "/month")   s_reportReq = 2;
-    else if (cmd == "/battery") s_reportReq = 3;
-    else if (cmd == "/cells")   send(cli, chat, paceText());
-    else if (cmd == "/backup") { s_bakReq = true; send(cli, chat, "Собираю резервную копию, сейчас пришлю."); }
-    else if (cmd == "/opp")     send(cli, chat, setAsk(0, arg));
-    else if (cmd == "/chp")     send(cli, chat, setAsk(1, arg));
-    else if (cmd == "/yes")     send(cli, chat, setConfirm());
-    else if (cmd == "/forecast" || cmd == "/weather") send(cli, chat, weatherText());
-    else if (cmd == "/csv") { s_csvCaption = "📎 Статистика по дням — открывается в Excel"; s_csvReq = true; send(cli, chat, "Собираю таблицу, сейчас пришлю."); }
-    else if (cmd == "/opptest") { s_oppReq = true; send(cli, chat, "Тест OPP принят — начну в течение пары секунд."); }
-    else                        send(cli, chat, HELP);
+    if (cmd == "/status" || cmd == "/start") send(ch, cli, chat, statusText());
+    else if (cmd == "/today")   send(ch, cli, chat, todayText());
+    else if (cmd == "/outages") send(ch, cli, chat, outagesText());
+    else if (cmd == "/boots")   send(ch, cli, chat, "🔁 " + bootText());
+    else if (cmd == "/settings") send(ch, cli, chat, invSettingsText() + "\nМенять — на странице модуля: «Настройки» → «Инвертор».");
+    else if (cmd == "/schedule") send(ch, cli, chat, schedText());
+    else if (cmd == "/week")    { s_reportCh = ch; s_reportReq = 1; }
+    else if (cmd == "/month")   { s_reportCh = ch; s_reportReq = 2; }
+    else if (cmd == "/battery") { s_reportCh = ch; s_reportReq = 3; }
+    else if (cmd == "/cells")   send(ch, cli, chat, paceText());
+    else if ((cmd == "/backup" || cmd == "/csv") && ch != CH_TG)
+        send(ch, cli, chat, "Файлы бот присылает только в Telegram. Таблица статистики и резервная копия есть "
+                            "на странице модуля: «Статистика» → «Скачать CSV», «Настройки» → «Модуль» → «Резервная копия».");
+    else if (cmd == "/backup") { s_bakReq = true; send(ch, cli, chat, "Собираю резервную копию, сейчас пришлю."); }
+    else if (cmd == "/opp")     send(ch, cli, chat, setAsk(0, arg));
+    else if (cmd == "/chp")     send(ch, cli, chat, setAsk(1, arg));
+    else if (cmd == "/yes")     send(ch, cli, chat, setConfirm());
+    else if (cmd == "/forecast" || cmd == "/weather") send(ch, cli, chat, weatherText());
+    else if (cmd == "/csv") { s_csvCaption = "📎 Статистика по дням — открывается в Excel"; s_csvReq = true; send(ch, cli, chat, "Собираю таблицу, сейчас пришлю."); }
+    else if (cmd == "/opptest") { s_oppReq = true; send(ch, cli, chat, "Тест OPP принят — начну в течение пары секунд."); }
+    else                        send(ch, cli, chat, HELP);
 }
 
 static void poll(WiFiClientSecure& cli) {
     String out;
+    int64_t& s_offset = s_ch[CH_TG].offset;
     if (!api(cli, "getUpdates", "offset=" + String((long long)s_offset) + "&timeout=0&allowed_updates=%5B%22message%22%5D", out, 20)) return;
     int pos = 0;
     while ((pos = out.indexOf("\"update_id\":", pos)) >= 0) {
@@ -574,49 +649,220 @@ static void poll(WiFiClientSecure& cli) {
         String text = field(upd, "text", 0);
         if (c >= 0 && text.length()) {
             String chat = String(atoll(upd.c_str() + c + 13));
-            handle(cli, chat, text);
+            handle(CH_TG, cli, chat, text);
         }
         pos += 12;
     }
 }
 
-static void task(void*) {
-    WiFiClientSecure cli;
-    cli.setCACert(TG_ROOT_CA);
-    bool greeted = false;
-    for (;;) {
-        if (token().isEmpty() || WiFi.status() != WL_CONNECTED || otaBusy()) {   // при обновлении — молчим
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            continue;
+// ------------------------------------------------------------------ MAX
+
+// Разбор JSON для ответов MAX. У Telegram хватало поиска по строке, а у MAX
+// ответы вложенные и порядок ключей не обещан: "chat_id" есть и у получателя,
+// и в других объектах. Поэтому ключ ищется только на верхнем уровне своего
+// объекта, вложенные значения перескакиваются целиком.
+
+// Конец значения, начинающегося в p (объект, массив, строка, число, литерал).
+static int jEnd(const String& s, int p) {
+    int n = s.length();
+    if (p < 0 || p >= n) return -1;
+    char c = s[p];
+    if (c == '{' || c == '[') {
+        int depth = 0;
+        bool str = false;
+        for (int i = p; i < n; i++) {
+            char k = s[i];
+            if (str) { if (k == '\\') i++; else if (k == '"') str = false; continue; }
+            if (k == '"') str = true;
+            else if (k == '{' || k == '[') depth++;
+            else if ((k == '}' || k == ']') && --depth == 0) return i + 1;
         }
-        tlsLock();                               // TLS один за раз — с погодой делим
-        if (!s_bot.length()) {
-            String out;
-            if (api(cli, "getMe", "", out)) s_bot = "@" + field(out, "username", 0);
-            else { cli.stop(); tlsUnlock(); vTaskDelay(pdMS_TO_TICKS(15000)); continue; }
+        return -1;
+    }
+    if (c == '"') {
+        for (int i = p + 1; i < n; i++) { if (s[i] == '\\') i++; else if (s[i] == '"') return i + 1; }
+        return -1;
+    }
+    int i = p;
+    while (i < n && s[i] != ',' && s[i] != '}' && s[i] != ']' && !isspace((uint8_t)s[i])) i++;
+    return i;
+}
+
+static int jWs(const String& s, int i) { while (i < (int)s.length() && isspace((uint8_t)s[i])) i++; return i; }
+
+// Начало значения ключа key в объекте, что открывается в obj; −1 — нет.
+static int jKey(const String& s, int obj, const char* key) {
+    int end = jEnd(s, obj);
+    if (end < 0 || s[obj] != '{') return -1;
+    int i = obj + 1;
+    while (i < end) {
+        i = jWs(s, i);
+        if (s[i] == ',') { i++; continue; }
+        if (s[i] != '"') return -1;
+        int ke = jEnd(s, i);
+        if (ke < 0) return -1;
+        bool match = s.substring(i + 1, ke - 1) == key;
+        i = jWs(s, ke);
+        if (s[i] != ':') return -1;
+        i = jWs(s, i + 1);
+        if (match) return i;
+        i = jEnd(s, i);
+        if (i < 0) return -1;
+    }
+    return -1;
+}
+
+// Строка JSON в UTF-8; \uXXXX — в UTF-8 (суррогатные пары — смайлы — пропускаем).
+static String jStr(const String& s, int p) {
+    String o;
+    if (p < 0 || s[p] != '"') return o;
+    for (int i = p + 1; i < (int)s.length(); i++) {
+        char c = s[i];
+        if (c == '"') break;
+        if (c != '\\') { o += c; continue; }
+        char e = s[++i];
+        if (e == 'n') o += '\n';
+        else if (e == 't') o += '\t';
+        else if (e == 'u') {
+            unsigned cp = strtoul(s.substring(i + 1, i + 5).c_str(), nullptr, 16);
+            i += 4;
+            if (cp < 0x80) o += (char)cp;
+            else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 0x3F)); }
+            else if (cp < 0xD800 || cp > 0xDFFF) {
+                o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F));
+            }
+        } else o += e;
+    }
+    return o;
+}
+
+static String jNum(const String& s, int p) {
+    if (p < 0 || !(isdigit((uint8_t)s[p]) || s[p] == '-')) return "";
+    return String((long long)atoll(s.c_str() + p));
+}
+
+// Одно событие: сообщение в личном диалоге с ботом или «Начать» (bot_started;
+// с payload — если открыли ссылку max.ru/<бот>?start=<код>).
+static void maxUpdate(WiFiClientSecure& cli, const String& s, int u) {
+    String type = jStr(s, jKey(s, u, "update_type"));
+    if (type == "bot_started") {
+        String chat = jNum(s, jKey(s, u, "chat_id"));
+        int pl = jKey(s, u, "payload");
+        if (chat.length()) handle(CH_MAX, cli, chat, "/start " + jStr(s, pl));
+        return;
+    }
+    if (type != "message_created") return;
+    int msg = jKey(s, u, "message");
+    if (msg < 0 || s[msg] != '{') return;
+    int snd = jKey(s, msg, "sender");
+    if (snd >= 0 && s[snd] == '{') {
+        int ib = jKey(s, snd, "is_bot");
+        if (ib >= 0 && s[ib] == 't') return;              // своё же сообщение
+    }
+    int rcp = jKey(s, msg, "recipient");
+    if (rcp < 0 || s[rcp] != '{') return;
+    int ct = jKey(s, rcp, "chat_type");
+    if (ct >= 0 && jStr(s, ct) != "dialog") return;       // только личный диалог, не группы
+    String chat = jNum(s, jKey(s, rcp, "chat_id"));
+    int body = jKey(s, msg, "body");
+    if (!chat.length() || body < 0 || s[body] != '{') return;
+    int tx = jKey(s, body, "text");
+    if (tx >= 0 && s[tx] == '"') handle(CH_MAX, cli, chat, jStr(s, tx));
+}
+
+// Долгий опрос с timeout=0 — как у Telegram: соединение не держим. marker —
+// указатель на следующее событие; всё до него MAX считает прочитанным.
+static void maxPoll(WiFiClientSecure& cli) {
+    Chan& c = s_ch[CH_MAX];
+    String out;
+    String path = "/updates?timeout=0&limit=20&types=message_created,bot_started";
+    if (c.offset) path += "&marker=" + String((long long)c.offset);
+    if (!maxApi(cli, path, "", out, 20)) return;
+    int top = out.indexOf('{');
+    if (top < 0) return;
+    int mk = jKey(out, top, "marker");
+    if (mk >= 0 && isdigit((uint8_t)out[mk])) c.offset = atoll(out.c_str() + mk);
+    int arr = jKey(out, top, "updates");
+    if (arr < 0 || out[arr] != '[') return;
+    int end = jEnd(out, arr);
+    int i = arr + 1;
+    while (i > 0 && i < end) {
+        i = jWs(out, i);
+        if (out[i] == ',') { i++; continue; }
+        if (out[i] != '{') break;
+        int e = jEnd(out, i);
+        if (e < 0) break;
+        maxUpdate(cli, out, i);
+        i = e;
+    }
+}
+
+// ------------------------------------------------------------------ задача
+
+// Один проход канала: имя бота, приветствие, проверка, файлы, очередь, опрос.
+// false — до API не достучались, следующий заход через 15 с.
+static bool cycle(uint8_t ch, WiFiClientSecure& cli) {
+    Chan& c = s_ch[ch];
+    if (!c.bot.length()) {
+        String out;
+        if (ch == CH_TG) {
+            if (!api(cli, "getMe", "", out)) return false;
+            c.bot = "@" + field(out, "username", 0);
+        } else {
+            if (!maxApi(cli, "/me", "", out)) return false;
+            int top = out.indexOf('{');
+            String u = jStr(out, jKey(out, top, "username"));
+            c.bot = u.length() ? "@" + u : jStr(out, jKey(out, top, "first_name"));
         }
-        String chat = chatId();
-        if (chat.length() && !greeted) {
-            greeted = true;
-            send(cli, chat, String(bootWasBad() ? "⚠️" : "🟢") + " Модуль на связи, сборка " + fwBuild() +
+    }
+    String chat = chatId(ch);
+    if (chat.length() && !c.greeted) {
+        c.greeted = true;
+        send(ch, cli, chat, String(bootWasBad() ? "⚠️" : "🟢") + " Модуль на связи, сборка " + fwBuild() +
                             "\nперезапуск: " + bootReason());
+    }
+    if (c.test) { c.test = false; if (chat.length()) send(ch, cli, chat, "Проверка: бот работает.\n\n" + statusText()); }
+    if (ch == CH_TG && chat.length() && s_csv) sendCsv(cli, chat);
+    char* msg;
+    while (chat.length() && xQueueReceive(c.q, &msg, 0) == pdTRUE) {
+        send(ch, cli, chat, msg);
+        free(msg);
+    }
+    if (ch == CH_TG) poll(cli);
+    else maxPoll(cli);
+    return true;
+}
+
+static bool pending() {
+    for (uint8_t ch = 0; ch < NCH; ch++)
+        if (uxQueueMessagesWaiting(s_ch[ch].q) || s_ch[ch].test) return true;
+    return s_csv && chatId(CH_TG).length();
+}
+
+static void task(void*) {
+    static WiFiClientSecure cli[NCH];
+    cli[CH_TG].setCACert(TG_ROOT_CA);
+    cli[CH_MAX].setCACert(MAX_ROOT_CA);
+    uint32_t failMs[NCH] = { 0, 0 };              // когда не достучались; 0 — всё хорошо
+    for (;;) {
+        bool any = false;
+        if (WiFi.status() == WL_CONNECTED && !otaBusy()) {       // при обновлении — молчим
+            for (uint8_t ch = 0; ch < NCH; ch++) {
+                if (token(ch).isEmpty()) { failMs[ch] = 0; continue; }
+                any = true;
+                if (failMs[ch] && millis() - failMs[ch] < 15000) continue;
+                tlsLock();                       // TLS один за раз — с погодой делим
+                bool ok = cycle(ch, cli[ch]);
+                // Соединение не держим: закрыли — память свободна до следующего
+                // опроса; пришло уведомление — очередь разбудит раньше.
+                cli[ch].stop();
+                tlsUnlock();
+                failMs[ch] = ok ? 0 : (millis() | 1);
+            }
         }
-        if (s_testReq) { s_testReq = false; if (chat.length()) send(cli, chat, "Проверка: бот работает.\n\n" + statusText()); }
-        if (chat.length() && s_csv) sendCsv(cli, chat);
-        char* msg;
-        while (chat.length() && xQueueReceive(s_q, &msg, 0) == pdTRUE) {
-            send(cli, chat, msg);
-            free(msg);
-        }
-        poll(cli);
-        // Соединение не держим: TLS занимает десятки килобайт внутренней
-        // памяти, а её на плате впритык (21.10.2026 минимум доходил до 752 байт,
-        // и обновление прошивки не нашло 4 КБ). Закрыли — память свободна до
-        // следующего опроса; пришло уведомление — очередь разбудит раньше.
-        cli.stop();
-        tlsUnlock();
+        if (!any) { vTaskDelay(pdMS_TO_TICKS(3000)); continue; }
         uint32_t t0 = millis();
-        while (millis() - t0 < POLL_MS && !uxQueueMessagesWaiting(s_q) && !s_testReq && !s_csv) vTaskDelay(pdMS_TO_TICKS(200));
+        while (millis() - t0 < POLL_MS && !pending()) vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
@@ -708,7 +954,7 @@ void tgLoop() {
     static bool lowSent = false, linkSent = false;
     static uint8_t prevFault = 0;
     static int32_t summaryDay = -1;
-    if (millis() - last < 5000 || !s_mx || chatId().isEmpty()) return;
+    if (millis() - last < 5000 || !s_mx || !anyChat()) return;
     last = millis();
 
     InvState v = invSnapshot();
@@ -776,55 +1022,69 @@ void tgLoop() {
 
 // ------------------------------------------------------------------ настройка
 
-static void newCode() {
+static void newCode(uint8_t ch) {
     char b[8];
     snprintf(b, sizeof(b), "%06lu", (unsigned long)(esp_random() % 900000 + 100000));
-    s_code = b;
+    s_ch[ch].code = b;
 }
 
 void tgStart() {
-    newCode();
     s_mx = xSemaphoreCreateMutex();
-    s_q = xQueueCreate(12, sizeof(char*));
+    for (uint8_t ch = 0; ch < NCH; ch++) {
+        newCode(ch);
+        s_ch[ch].q = xQueueCreate(12, sizeof(char*));
+        String st = token(ch).isEmpty() ? String("не настроен")
+                  : (chatId(ch).isEmpty() ? "ждёт /start " + s_ch[ch].code : String("привязан к чату"));
+        Serial.printf("[tg] %s: %s\n", ch == CH_MAX ? "MAX" : "Telegram", st.c_str());
+    }
     xTaskCreatePinnedToCore(task, "tg", 12288, nullptr, 2, nullptr, 1);
-    String st = token().isEmpty() ? String("не настроен") : (chatId().isEmpty() ? "ждёт /start " + s_code : String("привязан к чату"));
-    Serial.printf("[tg] бот %s\n", st.c_str());
 }
 
-String tgSetToken(const String& token) {
+String tgSetToken(const String& token, uint8_t ch) {
+    if (ch >= NCH) return "нет такого канала";
     String t = token;
     t.trim();
-    if (t.length() && (t.indexOf(':') < 0 || t.length() < 30)) return "это не похоже на токен от @BotFather";
+    if (ch == CH_TG && t.length() && (t.indexOf(':') < 0 || t.length() < 30)) return "это не похоже на токен от @BotFather";
+    if (ch == CH_MAX && t.length() && (t.length() < 20 || t.indexOf(' ') >= 0)) return "это не похоже на токен бота MAX";
     xSemaphoreTake(s_mx, portMAX_DELAY);
-    cfg().tgToken = t;
-    cfg().tgChat = "";
+    tokRef(ch) = t;
+    chatRef(ch) = "";
     cfgSave();
     xSemaphoreGive(s_mx);
-    s_bot = "";
-    s_err = "";
-    s_offset = 0;
-    newCode();
+    Chan& c = s_ch[ch];
+    c.bot = "";
+    c.err = "";
+    c.offset = 0;
+    c.greeted = false;
+    newCode(ch);
     return "";
 }
 
-void tgUnbind() {
-    setChat("");
-    newCode();
+void tgUnbind(uint8_t ch) {
+    if (ch >= NCH) return;
+    setChat(ch, "");
+    newCode(ch);
 }
 
-void tgTest() { s_testReq = true; }
+void tgTest(uint8_t ch) { if (ch < NCH) s_ch[ch].test = true; }
 
-String tgStateJson() {
-    bool chat = chatId().length();
-    String j = "{\"on\":" + String(token().length() ? "true" : "false");
-    j += ",\"bot\":\"" + s_bot + "\"";
+static String chanJson(uint8_t ch) {
+    const Chan& c = s_ch[ch];
+    bool chat = chatId(ch).length();
+    String j = "\"on\":" + String(token(ch).length() ? "true" : "false");
+    j += ",\"bot\":\"" + jsonEsc(c.bot) + "\"";
     j += ",\"chat\":" + String(chat ? "true" : "false");
-    if (!chat) j += ",\"code\":\"" + s_code + "\"";
+    if (!chat) j += ",\"code\":\"" + c.code + "\"";
+    j += ",\"err\":\"" + jsonEsc(c.err) + "\"";
+    return j;
+}
+
+// Telegram — на верхнем уровне, как было; MAX — в "max".
+String tgStateJson() {
+    String j = "{" + chanJson(CH_TG);
     j += ",\"low\":" + String(cfg().tgSocLow);
     j += ",\"net\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false");
-    String e = s_err;
-    e.replace("\"", "'");
-    j += ",\"err\":\"" + e + "\"}";
+    j += ",\"max\":{" + chanJson(CH_MAX) + "}}";
     return j;
 }
 

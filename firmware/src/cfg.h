@@ -17,6 +17,8 @@ struct Config {
                           // чтобы человек смог вернуться и узнать новый адрес
     String   tgToken;     // токен бота Telegram от @BotFather; пусто — бот выключен
     String   tgChat;      // привязанный чат; пусто — ждём /start с кодом
+    String   mxToken;     // токен бота MAX (business.max.ru); пусто — MAX выключен
+    String   mxChat;      // привязанный чат MAX (chat_id диалога)
     uint8_t  tgSocLow;    // порог «батарея разряжена», %
 
     // Погода и автоматика (weather.cpp). Координаты 0/0 — погода выключена.

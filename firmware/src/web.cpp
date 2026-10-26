@@ -478,13 +478,14 @@ void webStart() {
             return;
         }
         String err;
-        if (server.hasArg("token")) err = tgSetToken(server.arg("token"));
+        uint8_t ch = server.arg("ch") == "max" ? 1 : 0;   // Telegram или MAX
+        if (server.hasArg("token")) err = tgSetToken(server.arg("token"), ch);
         if (server.hasArg("low")) {
             long low = server.arg("low").toInt();
             if (low >= 5 && low <= 90) { cfg().tgSocLow = low; cfgSave(); } else err = "порог — от 5 до 90 %";
         }
-        if (server.hasArg("test"))   tgTest();
-        if (server.hasArg("unbind")) tgUnbind();
+        if (server.hasArg("test"))   tgTest(ch);
+        if (server.hasArg("unbind")) tgUnbind(ch);
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
     });
