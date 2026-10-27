@@ -875,6 +875,10 @@ body.light pre.rep { background: #f2f4f8; }
         Нужна только первые три дня. Дальше модуль сам учится по тому, сколько
         панели дали на самом деле при такой погоде.
       </div>
+      <label>Пароль модуля</label>
+      <input id="au_passwx" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('wx')">Сохранить</button></div>
+      <div class="sub" id="au_msgwx" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -899,6 +903,10 @@ body.light pre.rep { background: #f2f4f8; }
       <label>Заряжать до, %</label>
       <input id="au_soc" inputmode="numeric">
       <div class="sub" id="au_last" style="margin-top:8px"></div>
+      <label>Пароль модуля</label>
+      <input id="au_passch" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('ch')">Сохранить</button></div>
+      <div class="sub" id="au_msgch" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -2223,14 +2231,19 @@ function autoRender(s) {
   else chip("au_achip", "green", "ждёт ночи");
   $("au_last").innerHTML = a.msg ? "Последнее решение: " + a.msg + "." : "";
 }
-function autoSave() {
-  var q = ["lat", "lon", "kwp", "price", "below", "from", "to", "soc"].map(function (k) {
+// У каждой карточки «Авто» свой пароль и кнопка; уходят все поля вкладки
+// сразу — ручка одна (/api/auto).
+function autoSave(c) {
+  c = c || "";
+  var msg = $("au_msg" + c), q = ["lat", "lon", "kwp", "price", "below", "from", "to", "soc"].map(function (k) {
     return k + "=" + encodeURIComponent($("au_" + k).value);
-  }).join("&") + "&on=" + $("au_on").value + "&pass=" + encodeURIComponent($("au_pass").value);
+  }).join("&") + "&on=" + $("au_on").value + "&pass=" + encodeURIComponent($("au_pass" + c).value);
   get("/api/auto?" + q, function (r) {
-    $("au_msg").innerHTML = r.ok ? "сохранено — если сейчас ночное окно, решение о зарядке будет пересмотрено в течение 10 с" : (r.error || "не вышло");
+    msg.innerHTML = !r.ok ? (r.error || "не вышло")
+      : c === "ch" ? "сохранено — если сейчас ночное окно, решение о зарядке будет пересмотрено в течение 10 с"
+      : c === "wx" ? "сохранено — если координаты сменились, прогноз будет запрошен заново" : "сохранено";
     if (r.ok) auFilled = false;
-  }, function () { $("au_msg").innerHTML = "модуль не ответил, попробуйте ещё раз"; });
+  }, function () { msg.innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }
 
 /* ----------------------------------------- резервная копия */
