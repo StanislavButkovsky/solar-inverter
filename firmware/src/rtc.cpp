@@ -17,6 +17,8 @@ static bool              s_present = false;
 static bool              s_fromRtc = false;    // системное время взято из модуля
 static volatile bool     s_writeReq = false;   // пришло время снаружи — записать
 static uint32_t          s_lastWrite = 0;
+static time_t            s_seen = 0;           // последнее прочитанное из модуля (0 — неверно)
+static uint32_t          s_seenMs = 0;         // когда прочитано — для /api/state без I²C
 
 static uint8_t bcd2bin(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
 static uint8_t bin2bcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
@@ -111,6 +113,17 @@ void rtcStart() {
 void rtcTimeSetExternally() { s_writeReq = true; s_fromRtc = false; }
 
 void rtcLoop() {
+    // Раз в 30 с — опросить модуль: подключённый без перезагрузки находится,
+    // а /api/state и бот берут готовое, не трогая I²C из чужой задачи.
+    static uint32_t probe = 0;
+    if (!probe || millis() - probe > 30000) {
+        probe = millis() | 1;
+        if (!s_present) {
+            Wire.beginTransmission(ADDR);
+            if (Wire.endTransmission() == 0) { s_present = true; s_writeReq = true; Serial.println("[rtc] DS3231 подключён"); }
+        }
+        if (s_present) { s_seen = rtcRead(); s_seenMs = millis(); }
+    }
     if (!s_present || time(nullptr) < VALID_FROM) return;
     bool resync = s_lastWrite && !s_fromRtc && millis() - s_lastWrite > RESYNC_MS;
     if (!s_writeReq && !resync) return;
@@ -119,6 +132,7 @@ void rtcLoop() {
     if (rtcWrite(time(nullptr))) {
         s_lastWrite = millis();
         if (!s_lastWrite) s_lastWrite = 1;
+        s_seen = rtcRead(); s_seenMs = millis();
         Serial.println("[rtc] время записано в DS3231");
     }
 }
@@ -134,4 +148,12 @@ String rtcStatus() {
     snprintf(b, sizeof(b), "DS3231: %02d.%02d.%04d %02d:%02d:%02d", lt.tm_mday, lt.tm_mon + 1,
              lt.tm_year + 1900, lt.tm_hour, lt.tm_min, lt.tm_sec);
     return b;
+}
+
+// {"on":есть ли модуль,"ok":верно ли в нём время,"diff":модуль − система, с}
+String rtcJson() {
+    if (!s_present) return "{\"on\":false}";
+    if (!s_seen) return "{\"on\":true,\"ok\":false}";
+    long diff = (long)(s_seen + (millis() - s_seenMs) / 1000 - time(nullptr));
+    return "{\"on\":true,\"ok\":true,\"diff\":" + String(diff) + "}";
 }

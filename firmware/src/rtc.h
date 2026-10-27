@@ -21,3 +21,4 @@ void   rtcStart();            // найти модуль и взять из не
 void   rtcLoop();             // записать время в модуль, когда пришло снаружи
 void   rtcTimeSetExternally(); // время задали с телефона или командой — записать
 String rtcStatus();           // для status: есть ли модуль и что в нём
+String rtcJson();             // для /api/state: из последнего опроса, без I²C

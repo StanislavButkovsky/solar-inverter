@@ -6,6 +6,7 @@
 #include "pace.h"
 #include "backup.h"
 #include "web.h"
+#include "rtc.h"
 #include "webui_gz.h"
 #include "icon.h"
 #include "state.h"
@@ -163,6 +164,7 @@ static String jsonState() {
     j += ",\"tg\":" + tgStateJson();
     j += ",\"boot\":" + bootJson();
     j += ",\"wx\":" + weatherJson();
+    j += ",\"rtc\":" + rtcJson();
     // Память: если что-то течёт (TLS бота, строки), это видно здесь со временем.
     j += ",\"heap\":{\"free\":" + String(ESP.getFreeHeap()) + ",\"max\":" + String(ESP.getMaxAllocHeap()) +
          ",\"min\":" + String(ESP.getMinFreeHeap()) + ",\"psram\":" + String(ESP.getPsramSize()) +
