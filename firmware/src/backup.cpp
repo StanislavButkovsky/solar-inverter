@@ -17,7 +17,8 @@
 
 struct NvsKey { const char* ns; const char* key; char type; };
 static const NvsKey NVSK[] = {
-    { "sched",   "r",     'b' },   // расписание режимов
+    { "sched",   "r2",    'b' },   // расписание режимов
+    { "sched",   "r",     'b' },   // оно же прежнего вида — из старых копий
     { "invprof", "ver",   'q' },   // настройки инвертора, сверенные с панелью
     { "wx",      "k",     'b' },   // коэффициент панелей по дням
     { "wx",      "kday",  'i' },
