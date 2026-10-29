@@ -2082,11 +2082,17 @@ function scSave() {
 }
 
 /* ----------------------------------------- все настройки инвертора */
-var isData = null, isOpen = "", isWait = -1, isLoadAt = 0, isEMsg = "";
+var isData = null, isOpen = "", isWait = -1, isLoadAt = 0, isEMsg = "", isPassBad = false;
 // Пароль и ответ — и вверху карточки, и в открытой настройке: ответ только
 // вверху был за экраном, и «Совпадает» казалась мёртвой (29.10.2026).
-function isMsg(t) { isEMsg = t; $("is_msg").innerHTML = t; var m = $("is_emsg"); if (m) m.innerHTML = t; }
+function isMsg(t) {
+  isPassBad = /пароль/.test(t);                // не подошёл — поле снова у кнопок
+  isEMsg = t; $("is_msg").innerHTML = t; var m = $("is_emsg"); if (m) m.innerHTML = t; }
+// Поле у кнопок — пока пароль не введён или не подошёл; пока в нём печатают,
+// перерисовка раз в 15 с его не убирает.
 function isPassRow() {
+  var a = document.activeElement;
+  if ($("is_pass").value && !isPassBad && !(a && a.id === "is_epass")) return "";
   return '<label>Пароль модуля</label><input id="is_epass" type="password" autocomplete="current-password" oninput="$(\'is_pass\').value=this.value">';
 }
 function isLoad(force) {
