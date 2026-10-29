@@ -169,7 +169,10 @@ String invSetSetting(uint8_t what, uint8_t code) {
 // команда — одна настройка, вся таблица обходится примерно за минуту.
 // Ответ у всех одинакового вида — «(56.4», «(030», «(SIQ», — поэтому он
 // приписывается по голове очереди отправленных, как «(dd» у OPR??.
-// Настройка, на которую инвертор дважды ответил NAK, больше не спрашивается.
+// Настройка, на которую инвертор дважды ответил NAK, больше не спрашивается —
+// но только если не ответила ни разу. NAK приписывается по той же голове
+// очереди и бывает чужим: 29.10.2026 полтора десятка настроек, прочитанных
+// 22.10, висели «не поддерживается» со старыми значениями.
 //
 // Запись — только сверенной с экраном (отметка на странице, в NVS),
 // в пределах руководства и с перечитыванием, как у OPP/CHP.
@@ -283,6 +286,7 @@ static void applySetValue(uint8_t idx, const char* text) {
     float v = strtof(text, nullptr) / setScale(idx);
     s_sv[idx] = v;
     s_sup[idx] = 1;
+    s_nak[idx] = 0;
     if (s_g == G_VERIFY && s_gIdx == idx) {
         float tol = SETS[idx].dec ? 0.05f : 0.5f;
         if (fabsf(v - s_gWant) <= tol) gFinish(true, "встало");
@@ -295,7 +299,7 @@ static void setNak(uint8_t idx) {
     if (idx == SET_TE) { if (s_teNak < 2) s_teNak++; return; }
     if (idx == SET_TD) { if (s_tdNak < 2) s_tdNak++; return; }
     if (idx >= NSETS) return;
-    if (++s_nak[idx] >= 2) s_sup[idx] = 0;
+    if (s_sup[idx] != 1 && ++s_nak[idx] >= 2) s_sup[idx] = 0;   // отвечавшую — не списываем
     if (s_g == G_VERIFY && s_gIdx == idx) gFinish(false, "инвертор не ответил на перечитывание");
 }
 

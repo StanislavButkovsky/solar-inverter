@@ -2082,7 +2082,13 @@ function scSave() {
 }
 
 /* ----------------------------------------- все настройки инвертора */
-var isData = null, isOpen = "", isWait = -1, isLoadAt = 0;
+var isData = null, isOpen = "", isWait = -1, isLoadAt = 0, isEMsg = "";
+// Пароль и ответ — и вверху карточки, и в открытой настройке: ответ только
+// вверху был за экраном, и «Совпадает» казалась мёртвой (29.10.2026).
+function isMsg(t) { isEMsg = t; $("is_msg").innerHTML = t; var m = $("is_emsg"); if (m) m.innerHTML = t; }
+function isPassRow() {
+  return '<label>Пароль модуля</label><input id="is_epass" type="password" autocomplete="current-password" oninput="$(\'is_pass\').value=this.value">';
+}
 function isLoad(force) {
   if (!onSettings || setTabNow !== "inv") return;
   if (!force && Date.now() - isLoadAt < 15000) return;
@@ -2123,19 +2129,21 @@ function isRender() {
     h += '</div>';
   }
   $("is_list").innerHTML = h;
+  if ($("is_epass")) $("is_epass").value = $("is_pass").value;
   $("is_panel").innerHTML = "<b>Только с панели</b> — команд для них в протоколе нет или менять их из модуля опасно: " +
     d.panelOnly.split("|").join(", ") + ". Тип батареи тоже меняется только с панели.";
 }
 function isEditor(e) {
   var h = '<div class="is_ed">';
   if (e.note) h += '<div class="sub" style="margin-bottom:6px">' + e.note + '</div>';
+  var tail = '<div class="sub" id="is_emsg" style="margin-top:6px">' + isEMsg + '</div>';
   if (!e.ver) {
-    h += '<div class="sub">На панели: программа <b>' + (e.n < 10 ? "0" : "") + e.n + " " + e.p + '</b>. Там стоит <b>' +
+    h += isPassRow() + '<div class="sub" style="margin-top:8px">На панели: программа <b>' + (e.n < 10 ? "0" : "") + e.n + " " + e.p + '</b>. Там стоит <b>' +
          isVal(e, e.v) + '</b>?</div>' +
          '<button class="accent" onclick="isVerify(\'' + e.id + '\', 1)">Совпадает</button>' +
          '<button onclick="isToggle(\'\')">Не совпадает / потом</button>' +
          '<div class="sub" style="margin-top:6px">Если на экране другое — не отмечайте: значит, у HS35 своя нумерация, ' +
-         'и запись поставила бы не то. Напишите, что видите.</div></div>';
+         'и запись поставила бы не то. Напишите, что видите.</div>' + tail + '</div>';
     return h;
   }
   if (e.why) { h += '<div class="sub">' + e.why + '</div><button onclick="isToggle(\'\')">Закрыть</button></div>'; return h; }
@@ -2154,31 +2162,34 @@ function isEditor(e) {
     h += '<input id="is_in" inputmode="decimal" value="' + String(e.v.toFixed(e.d)).replace(".", ",") + '">' +
          '<div class="sub" style="margin-top:4px">' + isVal(e, e.lo) + " … " + isVal(e, e.hi) + ', шаг ' + String(e.st).replace(".", ",") + " " + e.u + '</div>';
   }
-  h += '<button class="accent" onclick="isWrite(\'' + e.id + '\')">Записать</button>' +
+  h += isPassRow() + '<button class="accent" onclick="isWrite(\'' + e.id + '\')">Записать</button>' +
        '<button onclick="isToggle(\'\')">Отмена</button>' +
-       '<button onclick="isVerify(\'' + e.id + '\', 0)">Снять отметку «сверено»</button></div>';
+       '<button onclick="isVerify(\'' + e.id + '\', 0)">Снять отметку «сверено»</button>' + tail + '</div>';
   return h;
 }
-function isToggle(id) { isOpen = isOpen === id ? "" : id; isRender(); }
+function isToggle(id) { isOpen = isOpen === id ? "" : id; isEMsg = ""; isRender(); }
 function isFind(id) { for (var i = 0; i < isData.list.length; i++) if (isData.list[i].id === id) return isData.list[i]; return null; }
 function isVerify(id, on) {
   var q = "/api/inv/verify?id=" + id + "&on=" + on + "&pass=" + encodeURIComponent($("is_pass").value);
+  if (!$("is_pass").value) { isMsg("введите пароль модуля"); return; }
+  isMsg("отправляю…");
   get(q, function (r) {
-    $("is_msg").innerHTML = r.ok ? (on ? "отмечено: сверено с панелью" : "отметка снята") : ("не вышло: " + (r.error || "?"));
+    isMsg(r.ok ? (on ? "отмечено: сверено с панелью" : "отметка снята") : ("не вышло: " + (r.error || "?")));
     if (r.ok) isLoad(true);
-  }, function () { $("is_msg").innerHTML = "модуль не ответил"; });
+  }, function () { isMsg("модуль не ответил"); });
 }
 function isWrite(id) {
   var e = isFind(id), v = $("is_in").value;
   if (!e) return;
+  if (!$("is_pass").value) { isMsg("введите пароль модуля"); return; }
   var shown = e.k === 2 ? v + " " + e.u : $("is_in").options[$("is_in").selectedIndex].text;
   if (!confirm("Записать в инвертор: " + (e.p || e.id) + " — " + e.t + " = " + shown + "?")) return;
   get("/api/state", function (s) {
     isWait = s.inv && s.inv.set ? s.inv.set.seq : 0;
     get("/api/inv/write?id=" + id + "&v=" + encodeURIComponent(v) + "&pass=" + encodeURIComponent($("is_pass").value), function (r) {
-      $("is_msg").innerHTML = r.ok ? "отправлено, жду ответа инвертора…" : ("не принято: " + (r.error || "?"));
-      if (!r.ok) isWait = -1; else { isOpen = ""; isRender(); }
-    }, function () { $("is_msg").innerHTML = "модуль не ответил"; isWait = -1; });
+      if (!r.ok) { isMsg("не принято: " + (r.error || "?")); isWait = -1; }
+      else { isOpen = ""; isEMsg = ""; isRender(); $("is_msg").innerHTML = "отправлено, жду ответа инвертора…"; }
+    }, function () { isMsg("модуль не ответил"); isWait = -1; });
   });
 }
 function isState(s) {                          // итог записи приходит в общем inv.set
