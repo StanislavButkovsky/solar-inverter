@@ -113,7 +113,12 @@ static bool analogTry(const char* f, size_t n, PacePack& p, uint8_t extraTemps, 
     memcpy(p.mv, mv, sizeof(uint16_t) * cells);
     memcpy(p.t10, t10, sizeof(int16_t) * temps);
     p.cells = cells; p.temps = temps;
-    p.curA = (int16_t)cur / 100.0f;
+    // Ток: у PACE 0x25 — в 10 мА, а у PACE в режиме PYLON (0x20) — в 100 мА:
+    // 02.11.2026 сумма двух батарей −1,43 А «по 10 мА» против −14,3 А от BMS
+    // через инвертор, и −14,3 А сходится с балансом (49,5 В × 14,3 ≈ 700 Вт
+    // при нагрузке 650 Вт).
+    bool pylon = f[1] == '2' && f[2] == '0' && !extraTemps;
+    p.curA = (int16_t)cur / (pylon ? 10.0f : 100.0f);
     p.voltV = v / 1000.0f;
     if (extraTemps) {
         // SEPLOS: после напряжения ёмкости и циклы лежат по-другому (проверено
@@ -169,7 +174,9 @@ bool paceAsciiStatus(const char* f, size_t n, PacePack& p) {
 // напряжение, затем Status1 (0 батарея выше, 1 ячейка ниже, 2 ток заряда,
 // 4 ток разряда, 5 перегрев разряда, 6 перегрев заряда, 7 батарея ниже) и
 // Status2 (1 ключ заряда, 2 ключ разряда). Балансировки в протоколе нет.
-// На живом кадре не проверено — первый кадр сохраняется сырым.
+// Status1…Status5 — последние пять байт: PACE в режиме PYLON перед ними
+// кладёт ещё два (живой кадр 02.11.2026: «…05 0000000000 | 00 06 00 00 |
+// 00 0E 40 00 00»), поэтому считаем с конца.
 bool paceAsciiStatusPylon(const char* f, size_t n, PacePack& p) {
     if (!paceAsciiCheck(f, n)) return false;
     size_t end = n - 5, off = 13;
@@ -187,7 +194,10 @@ bool paceAsciiStatusPylon(const char* f, size_t n, PacePack& p) {
         if (x == 2) warn |= 1 << 8;
         if (x == 1) warn |= 1 << 10;
     }
-    if (!hb(f, end, off, ci) || !hb(f, end, off, mv) || !hb(f, end, off, di) || !hb(f, end, off, s1) || !hb(f, end, off, s2)) return false;
+    uint8_t rest[16], nr = 0;
+    while (nr < sizeof(rest) && hb(f, end, off, rest[nr])) nr++;
+    if (nr < 8) return false;
+    ci = rest[0]; mv = rest[nr - 7]; di = rest[nr - 6]; s1 = rest[nr - 5]; s2 = rest[nr - 4];
     if (ci == 2) warn |= 1 << 4;
     if (mv == 2) warn |= 1 << 2;
     if (mv == 1) warn |= 1 << 3;
@@ -521,7 +531,13 @@ static String flags(uint16_t v, const char* const* names, uint8_t bits) {
     return r;
 }
 
-static String esc(String s) { s.replace("\"", "'"); return s; }
+static String esc(String s) {
+    s.replace("\"", "'");
+    s.replace("\\", "/");
+    String r;
+    for (size_t i = 0; i < s.length(); i++) if ((uint8_t)s[i] >= 0x20) r += s[i];   // \r из сырых кадров ломал JSON
+    return r;
+}
 
 String paceJson() {
     xSemaphoreTake(s_mx, portMAX_DELAY);
