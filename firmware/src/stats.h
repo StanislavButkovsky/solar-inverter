@@ -26,6 +26,9 @@ void   statsLoop();                       // из loop(): сам решает, �
 String statsJson(const String& range);    // day | week | month | year
 String outagesJson(uint16_t n);           // последние отключения, новые сверху
 void   powerWrite(void (*emit)(const String&));   // мощности за сутки по 5 минут — по частям
+// То же для дисплея: 288 точек по 5 минут, последняя — сейчас; −1 / 255 — нет
+// данных. Только из loop(). false — времени нет.
+bool   statsPower24(int16_t* pvW, int16_t* loadW, uint8_t* socPct);
 bool   statsTimeValid();
 void   statsClear();
 void   statsToday(float& pvWh, float& gridWh, float& loadWh);   // накоплено за сегодня

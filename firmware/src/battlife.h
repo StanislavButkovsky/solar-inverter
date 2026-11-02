@@ -18,5 +18,6 @@ void   battStart();
 void   battLoop();                // из loop(), раз в секунду
 float  battAhOutTotal();          // всего разряда с начала учёта, А·ч
 String battJson();                // для страницы
+void   battLifeInfo(float& ahOut, float& capEst);   // для дисплея: разряжено всего, А·ч; оценка ёмкости (0 — нет)
 String battText();                // для бота: /battery и сводка 1-го числа
 String battMonthText();           // «за прошлый месяц» — в сводку 1-го числа

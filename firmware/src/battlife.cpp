@@ -121,6 +121,8 @@ static String dmy(uint32_t t) {
 
 static String num(float v, int dec) { String r = String(v, (unsigned)dec); r.replace('.', ','); return r; }
 
+void battLifeInfo(float& ahOut, float& capEst) { ahOut = s_ahOut; capEst = estMedian(5); }
+
 String battJson() {
     BmsState b = stateSnapshot();
     float cap = b.capAh;

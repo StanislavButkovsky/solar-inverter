@@ -798,11 +798,13 @@ void statsCsv(void (*emit)(const String&, void*), void* ctx) {
     free(all);
 }
 
+static PwrRec s_pwrBuf[NPWR];                         // общий для powerWrite и statsPower24 — оба из loop()
+
 void powerWrite(void (*emit)(const String&)) {
     if (!s_bound) { emit("{\"valid\":false}"); return; }
     uint32_t end = localNow() / PWR_STEP;
-    static PwrRec buf[NPWR];
-    memset(buf, 0, sizeof(buf));
+    PwrRec* buf = s_pwrBuf;
+    memset(buf, 0, sizeof(s_pwrBuf));
     if (s_fs) readAt(F_PWR, 0, buf, sizeof(buf));
     PwrRec cur = pwrCurrent();
     emit("{\"valid\":true,\"step\":" + String(PWR_STEP) + ",\"end\":" + String(end));
@@ -826,6 +828,23 @@ void powerWrite(void (*emit)(const String&)) {
         emit(a + "]");
     }
     emit("}");
+}
+
+bool statsPower24(int16_t* pv, int16_t* load, uint8_t* soc) {
+    if (!s_bound) return false;
+    uint32_t end = localNow() / PWR_STEP;
+    memset(s_pwrBuf, 0, sizeof(s_pwrBuf));
+    if (s_fs) readAt(F_PWR, 0, s_pwrBuf, sizeof(s_pwrBuf));
+    PwrRec cur = pwrCurrent();
+    for (uint32_t i = 0; i < NPWR; i++) {
+        uint32_t slot = end - (NPWR - 1) + i;
+        const PwrRec& r = slot == s_pSlot ? cur : s_pwrBuf[slot % NPWR];
+        bool ok = r.slot == slot && r.n;
+        pv[i] = ok ? r.pv : -1;
+        load[i] = ok ? r.load : -1;
+        soc[i] = ok ? r.soc : 255;
+    }
+    return true;
 }
 
 String outagesJson(uint16_t n) {

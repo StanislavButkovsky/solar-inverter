@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 DIR = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/google-noto"
 TEXT = ([chr(c) for c in range(32, 127)] + [chr(c) for c in range(0x410, 0x450)] +
-        ["Ё", "ё", "°", "·", "−", "→", "…"])
+        ["Ё", "ё", "°", "·", "−", "→", "…", "₽", "–", "—"])
 BIG = list("0123456789 ,.%−-:")
 FONTS = [  # имя, файл, размер, набор
     ("FONT_S", "NotoSans-Regular.ttf", 16, TEXT),
@@ -31,7 +31,7 @@ def gen(name, file, size, chars):
         if w and h:
             im = Image.new("L", (w, h), 0)
             ImageDraw.Draw(im).text((-l, -t), ch, font=f, fill=255, anchor="ls")
-            px = list(im.getdata())
+            px = list(im.tobytes())
             for y in range(h):
                 row = [px[y * w + x] >> 4 for x in range(w)]
                 if len(row) % 2:
