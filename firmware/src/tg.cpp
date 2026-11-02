@@ -12,6 +12,7 @@
 #include "weather.h"
 #include "inv_codes.h"
 #include "schedule.h"
+#include "sms.h"
 #include "battlife.h"
 #include "pace.h"
 #include "backup.h"
@@ -304,12 +305,26 @@ void tgNotify(const String& text) {
     for (uint8_t ch = 0; ch < NCH; ch++) notifyCh(ch, text);
 }
 
+// Для SMS: коротко, без значков — «батарея 76 %, хватит на 7 ч 40 мин».
+static String battShort() {
+    BmsState b = stateSnapshot();
+    if (!b.fresh || !b.socKnown) return "";
+    String r = "Батарея " + String(b.soc, 0) + " %";
+    float avg = statsBattAvgA();
+    uint32_t eta = battEtaS(b.soc, b.capAh, avg, cfg().tgSocLow);
+    if (eta && avg < 0) r += ", хватит на " + dur(eta);
+    return r + ".";
+}
+
 void tgOutage(bool started, uint32_t seconds) {
     time_t now = time(nullptr);
-    if (started)
+    if (started) {
         tgNotify("⚡ Сеть пропала в " + hhmm(now - seconds) + "\n" + battLine());
-    else
+        smsAlert("Сеть пропала в " + hhmm(now - seconds) + ". " + battShort());
+    } else {
         tgNotify("✅ Сеть вернулась в " + hhmm(now) + ", её не было " + dur(seconds) + "\n" + battLine());
+        smsAlert("Сеть вернулась в " + hhmm(now) + ", не было " + dur(seconds) + ". " + battShort());
+    }
 }
 
 // ------------------------------------------------------------------ HTTPS
@@ -801,6 +816,9 @@ static void maxPoll(WiFiClientSecure& cli) {
 
 // Один проход канала: имя бота, приветствие, проверка, файлы, очередь, опрос.
 // false — до API не достучались, следующий заход через 15 с.
+static volatile uint32_t s_okMs = 0;              // последний удачный обмен — для SMS (sms.cpp)
+uint32_t tgLastOkMs() { return s_okMs; }
+
 static bool cycle(uint8_t ch, WiFiClientSecure& cli) {
     Chan& c = s_ch[ch];
     if (!c.bot.length()) {
@@ -830,6 +848,7 @@ static bool cycle(uint8_t ch, WiFiClientSecure& cli) {
     }
     if (ch == CH_TG) poll(cli);
     else maxPoll(cli);
+    s_okMs = millis() | 1;
     return true;
 }
 
@@ -899,7 +918,7 @@ static void alarmsLoop(const InvState& v, const BmsState& b) {
     static String pAlarm;
     String al = paceAlarm();
     if (al != pAlarm) {
-        if (al.length()) tgNotify("❗ BMS батарей: " + al);
+        if (al.length()) { tgNotify("❗ BMS батарей: " + al); smsAlert("BMS батарей: " + al); }
         else if (pAlarm.length()) tgNotify("✅ Защиты BMS батарей сняты");
         pAlarm = al;
     }
@@ -913,7 +932,10 @@ static void alarmsLoop(const InvState& v, const BmsState& b) {
     // Коды аварии и предупреждения самой BMS (HS35 передаёт их в GBMS).
     static uint16_t pF = 0, pW = 0;
     if (b.fresh && (b.bmsFault != pF || b.bmsWarn != pW)) {
-        if (b.bmsFault && b.bmsFault != pF) tgNotify("❗ BMS батареи сообщает об аварии, код " + String(b.bmsFault) + "\n" + battLine());
+        if (b.bmsFault && b.bmsFault != pF) {
+            tgNotify("❗ BMS батареи сообщает об аварии, код " + String(b.bmsFault) + "\n" + battLine());
+            smsAlert("Авария BMS батареи, код " + String(b.bmsFault) + ". " + battShort());
+        }
         else if (b.bmsWarn && b.bmsWarn != pW) tgNotify("⚠️ BMS батареи: предупреждение, код " + String(b.bmsWarn) + "\n" + battLine());
         else if (!b.bmsFault && !b.bmsWarn) tgNotify("✅ BMS батареи: снова в норме");
         pF = b.bmsFault; pW = b.bmsWarn;
@@ -970,6 +992,7 @@ void tgLoop() {
         if (!lowSent && low && millis() - lowSince >= 120000) {
             lowSent = true;
             tgNotify("🔋 Батарея " + String(b.soc, 0) + " % — ниже порога " + String(cfg().tgSocLow) + " %\n" + battLine());
+            smsAlert("Заряд ниже порога " + String(cfg().tgSocLow) + " %. " + battShort());
         } else if (lowSent && b.soc > cfg().tgSocLow + 5) {
             lowSent = false;
         }
@@ -980,9 +1003,11 @@ void tgLoop() {
             String t = invCodeText(v.faultCode);
             if (!v.faultCode)
                 tgNotify(prevFault >= 50 ? String("✅ Предупреждение инвертора снято") : String("✅ Авария инвертора снята"));
-            else
+            else {
                 tgNotify(String(v.faultCode >= 50 ? "⚠️ Предупреждение инвертора" : "❗ Авария инвертора") + ", код " +
                          String(v.faultCode) + (t.length() ? ": " + t : String("")));
+                if (v.faultCode < 50) smsAlert("Авария инвертора, код " + String(v.faultCode) + (t.length() ? ": " + t : String("")));
+            }
             prevFault = v.faultCode;
         }
         if (linkSent) tgNotify("✅ Связь с инвертором восстановлена");
@@ -991,6 +1016,7 @@ void tgLoop() {
     } else if (lastFresh && !linkSent && millis() - lastFresh > LINK_LOST_MS) {
         linkSent = true;
         tgNotify("⚠️ Нет связи с инвертором больше 5 минут");
+        smsAlert("Нет связи с инвертором больше 5 минут.");
     }
     // Сводка в 21:00 по местному времени, раз в сутки.
     if (statsTimeValid()) {

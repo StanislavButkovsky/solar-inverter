@@ -22,6 +22,7 @@ String dispSet(int, int, int, int, int, int) { return "дисплея на эт�
 #include "weather.h"
 #include "schedule.h"
 #include "battlife.h"
+#include "sms.h"
 #include "inv_codes.h"
 #include "disp_font.h"
 
@@ -85,7 +86,7 @@ struct DData {
     uint16_t cMin, cMax, bFault, bWarn;
     uint16_t cellMv[MAX_CELLS];
     // модуль
-    char     ip[16], fw[48];
+    char     ip[16], fw[48], gsm[40];   // gsm — «−73 дБм · MTS RUS»; пусто — модема нет
     bool     ap;
     int8_t   rssi;
     uint32_t upS, heapMin;
@@ -552,7 +553,8 @@ static void pageModule(const DData& d) {
     uint32_t m = d.upS / 60;
     String up = m >= 1440 ? String(m / 1440) + " д " + String(m / 60 % 24) + " ч" : String(m / 60) + " ч " + String(m % 60) + " мин";
     row2(y, "Работает", up, C_TEXT); y += 34;
-    row2(y, "Память, мин.", String(d.heapMin / 1024) + " КБ", d.heapMin < 40000 ? C_AMBER : C_TEXT); y += 34;
+    if (d.gsm[0]) { row2(y, "GSM", d.gsm, C_TEXT); y += 34; }    // с модемом — вместо памяти
+    else { row2(y, "Память, мин.", String(d.heapMin / 1024) + " КБ", d.heapMin < 40000 ? C_AMBER : C_TEXT); y += 34; }
     row2(y, "Прошивка", d.fw, C_TEXT); y += 34;
     y += 16;
     text(FONT_S, 10, y, "События", C_DIM);
@@ -812,6 +814,7 @@ void dispLoop() {
         strlcpy(d.ip, netIp().c_str(), sizeof(d.ip));
         d.upS = now / 1000;
         d.heapMin = ESP.getMinFreeHeap();
+        strlcpy(d.gsm, smsLine().c_str(), sizeof(d.gsm));
         String fw = fwBuild();                            // «02.11.2026 18:57, ab52422» → «ab52422 · 02.11»
         int c = fw.indexOf(", ");
         if (c >= 16) fw = fw.substring(c + 2) + " · " + fw.substring(0, 5);

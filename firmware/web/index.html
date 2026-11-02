@@ -1019,6 +1019,46 @@ body.light pre.rep { background: #f2f4f8; }
     </div></div>
   </div>
 
+  <div class="row" data-tab="tg">
+    <div class="col c1"><div class="card">
+      <h2>SMS <span id="sm_chip" class="chip gray">—</span></h2>
+      <div class="sub" id="sm_st" style="margin-bottom:10px">—</div>
+      <label>Когда слать</label>
+      <select id="sm_mode">
+        <option value="1">Только когда нет интернета</option>
+        <option value="2">Всегда, вместе с ботом</option>
+        <option value="0">Не слать</option>
+      </select>
+      <label>Ждать бота, минут</label>
+      <input id="sm_delay" inputmode="numeric">
+      <div class="sub" style="margin-top:6px">
+        Тревога ждёт столько минут; если за это время Telegram или MAX ответили —
+        сообщение ушло через бота, SMS не нужна. Когда интернет вернётся, бот
+        пришлёт список ушедших SMS.
+      </div>
+      <label>Номера (до трёх, через запятую)</label>
+      <input id="sm_nums" inputmode="tel" placeholder="+79781234567">
+      <div class="sub" style="margin-top:6px" id="sm_numsNow"></div>
+      <label>Код баланса</label>
+      <input id="sm_ussd" placeholder="*100#">
+      <label>Пароль модуля</label>
+      <input id="sm_pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="smSave()">Сохранить</button></div>
+      <div style="margin-top:8px">
+        <button onclick="smCmd('test')">Прислать проверку</button>
+        <button onclick="smCmd('bal')">Узнать баланс</button>
+      </div>
+      <div class="sub" id="sm_msg" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px;line-height:1.6">
+        SMS шлются при отключении и возврате сети, заряде ниже порога, аварии
+        инвертора и BMS, потере связи с инвертором. С этих же номеров можно
+        написать модулю: «статус» — заряд, «хватит на», сеть, солнце и дом;
+        «баланс» — баланс SIM-карты. Модем — SIM800L, только сеть 2G; питание —
+        отдельный блок 5 В / 2 А.
+      </div>
+    </div></div>
+  </div>
+
   <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
       <h2>Обновление прошивки</h2>
@@ -1275,6 +1315,7 @@ function setTab(t) {
   if (t === "auto") setTimeout(scLoad, 0);
   if (t === "batt") { setTimeout(paceLoad, 0); setTimeout(bsLoad, 0); }
   if (t === "sys") setTimeout(dpLoad, 0);
+  if (t === "tg") setTimeout(smLoad, 0);
   window.scrollTo(0, 0);
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
@@ -2108,6 +2149,44 @@ function scAdd() {
   scRules.push({ on: 1, d: 31, h: 7, m: 0, w: 0, c: 0, k: 0, o: 0 });
   scTouch();
 }
+/* ----------------------------------------- SMS */
+var smFilled = false;
+function smLoad() {
+  get("/api/sms", function (d) {
+    if (!d.on) { chip("sm_chip", "gray", "нет на этой плате"); $("sm_st").innerHTML = "Модем SIM800L подключается только к плате ESP32-S3."; return; }
+    var reg = { 1: "в сети", 5: "в сети (роуминг)", 2: "ищет сеть", 3: "оператор отказал", 0: "не в сети" };
+    if (!d.present) { chip("sm_chip", "gray", "модема нет"); $("sm_st").innerHTML = "Модем не отвечает" + (d.err ? " — " + d.err : "") + ". Модуль ищет его раз в 2 минуты."; }
+    else {
+      var ok = d.reg === 1 || d.reg === 5;
+      chip("sm_chip", ok ? "green" : "amber", ok ? "в сети" : (reg[d.reg] || "нет сети"));
+      var t = "Модем на связи" + (d.op ? ", " + d.op : "") + (d.dbm ? ", сигнал " + d.dbm + " дБм" : "") + ". ";
+      t += "Отправлено SMS: " + d.sent + (d.last ? " (последняя " + d.last + ")" : "") + ".";
+      if (d.pend) t += " Ждут бота: " + d.pend + ".";
+      if (d.bal) t += "<br>Баланс: " + d.bal;
+      if (d.err) t += "<br>Последняя ошибка: " + d.err;
+      $("sm_st").innerHTML = t;
+    }
+    $("sm_numsNow").innerHTML = d.n ? "Сейчас: " + d.nums : "Номеров пока нет.";
+    if (!smFilled) { smFilled = true; $("sm_mode").value = d.mode; $("sm_delay").value = d.delay; $("sm_ussd").value = d.ussd; }
+  });
+}
+function smSave() {
+  var q = "/api/sms?save=1&mode=" + $("sm_mode").value + "&delay=" + (+$("sm_delay").value || 0) +
+          "&ussd=" + encodeURIComponent($("sm_ussd").value) + "&pass=" + encodeURIComponent($("sm_pass").value);
+  if ($("sm_nums").value.trim()) q += "&nums=" + encodeURIComponent($("sm_nums").value);
+  get(q, function (r) {
+    $("sm_msg").innerHTML = r.ok ? "сохранено" : ("не сохранено: " + (r.error || "?"));
+    if (r.ok) { $("sm_nums").value = ""; smFilled = false; smLoad(); }
+  }, function () { $("sm_msg").innerHTML = "модуль не ответил"; });
+}
+function smCmd(what) {
+  get("/api/sms?" + what + "=1&pass=" + encodeURIComponent($("sm_pass").value), function (r) {
+    $("sm_msg").innerHTML = !r.ok ? ("не вышло: " + (r.error || "?"))
+      : what === "test" ? "проверка поставлена — SMS придёт в течение минуты" : "запрос отправлен — ответ оператора появится выше через 10–20 с";
+    if (r.ok) setTimeout(smLoad, what === "test" ? 15000 : 20000);
+  }, function () { $("sm_msg").innerHTML = "модуль не ответил"; });
+}
+
 /* ----------------------------------------- дисплей */
 function dpLoad() {
   get("/api/disp", function (d) {

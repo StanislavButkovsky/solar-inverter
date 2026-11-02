@@ -21,6 +21,7 @@
 #include "stats.h"
 #include "rtc.h"
 #include "disp.h"
+#include "sms.h"
 #include "ota.h"
 #include "tg.h"
 #include "bootlog.h"
@@ -109,6 +110,7 @@ void setup() {
     battSocStart();
     paceStart();              // BMS батарей по RS485 (HS35), если подключена
     tgStart();
+    smsStart();               // модем SIM800L — SMS, если подключён (только S3)
 #if defined(USB_PROBE)
     // Сборка разведки (esp32s3-probe): USB инвертора обслуживает не опрос,
     // а разведка — она опознаёт устройство и сохраняет отчёт в NVS.

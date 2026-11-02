@@ -11,7 +11,7 @@
 
 ```
 firmware/src/   main · cfg (NVS) · net · web (HTTP API) · stats (LittleFS) · tg (бот: Telegram и MAX)
-                weather (прогноз, ночная зарядка) · bootlog · ota · rtc (DS3231) · disp (ST7789) · cli
+                weather (прогноз, ночная зарядка) · bootlog · ota · rtc (DS3231) · disp (ST7789) · sms (SIM800L) · cli
                 schedule (расписание режимов) · battlife (износ) · pace (BMS по RS485)
                 battsoc (свой счёт заряда, пороги BMS) · tg_none / daly_none — заглушки сборок без бота / BLE
                 inv.cpp + profile_*.cpp (что спрашивать) + inv_usb/inv_ble (провод)

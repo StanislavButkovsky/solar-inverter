@@ -8,6 +8,7 @@
 #include "web.h"
 #include "rtc.h"
 #include "disp.h"
+#include "sms.h"
 #include "webui_gz.h"
 #include "icon.h"
 #include "state.h"
@@ -475,6 +476,25 @@ void webStart() {
 
     // Telegram: токен, порог, проверка, отвязка. Если пароль на обновление
     // задан, он нужен и здесь — токен даёт доступ к данным дома.
+    // SMS: модем, сеть, настройки. Чтение открыто (номера — со звёздочками),
+    // запись, проверка и баланс — под паролем модуля.
+    server.on("/api/sms", HTTP_GET, []() {
+        bool act = server.hasArg("save") || server.hasArg("test") || server.hasArg("bal");
+        if (!act) { server.send(200, "application/json; charset=utf-8", smsJson()); return; }
+        String err;
+        if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+        else if (server.hasArg("test")) smsTest();
+        else if (server.hasArg("bal")) smsBalance();
+        else {
+            String nums = server.arg("nums"), ussd = server.arg("ussd");
+            err = smsSet(server.hasArg("mode") ? (int)server.arg("mode").toInt() : -1, server.hasArg("nums") ? &nums : nullptr,
+                         server.hasArg("delay") ? (int)server.arg("delay").toInt() : -1, server.hasArg("ussd") ? &ussd : nullptr);
+        }
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
     server.on("/api/tg", HTTP_GET, []() {
         if (otaPasswordSet() && server.arg("pass") != cfg().webPass) {
             server.send(200, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"неверный пароль\"}");
