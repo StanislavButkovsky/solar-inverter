@@ -490,7 +490,7 @@ body.light pre.rep { background: #f2f4f8; }
         <div class="k">Запас энергии</div><div class="v"><span id="remain">—</span><span> кВт·ч</span></div>
       </div></div>
       <div class="col c4 cellonly"><div class="card tile">
-        <div class="k">Защита BMS</div><div class="v" style="font-size:18px;padding-top:6px" id="mos">—</div>
+        <div class="k">Заряд и разряд</div><div class="v" style="font-size:18px;padding-top:6px" id="mos">—</div>
       </div></div>
     </div>
 
@@ -1525,9 +1525,7 @@ function render(s) {
                         : (b.tMin === b.tMax ? b.tMax : (b.tMin + "…" + b.tMax));
   $("spread").innerHTML = b.spread;
   $("remain").innerHTML = fmt(kwh, 2);
-  $("mos").innerHTML =
-      '<span class="chip ' + (b.chgMos ? "green" : "red") + '" style="margin:0 6px 0 0">заряд</span>' +
-      '<span class="chip ' + (b.dsgMos ? "green" : "red") + '" style="margin:0">разряд</span>';
+  $("mos").innerHTML = mosChips(b.chgMos, b.dsgMos);
 
   /* --- что BMS сообщает инвертору (HS35): лимит тока, напряжение заряда, коды --- */
   var viaInv = b.limA >= 0;                    // от инвертора — и вместе с ячейками от BMS
@@ -2030,8 +2028,7 @@ function paceRender() {
     ];
     if (p.full > 0) rows.push(["Ёмкость", f1(p.rem) + " из " + f1(p.full) + " А·ч" + (p.design > 0 ? " (паспорт " + f1(p.design) + ")" : "")]);
     if (p.cycles) rows.push(["Циклов", String(p.cycles) + (p.soh >= 0 ? " · здоровье " + Math.round(p.soh) + " %" : "")]);
-    rows.push(["Ключи", '<span class="chip ' + (p.chg ? "green" : "red") + '" style="margin:0 6px 0 0">заряд</span>' +
-                        '<span class="chip ' + (p.dsg ? "green" : "red") + '" style="margin:0">разряд</span>']);
+    rows.push(["Заряд и разряд", mosChips(p.chg, p.dsg)]);
     if (p.prot)  rows.push(["Защита", '<span style="color:#ff6d55">' + p.prot + "</span>"]);
     if (p.fault) rows.push(["Неисправность", '<span style="color:#ff6d55">' + p.fault + "</span>"]);
     if (p.warn)  rows.push(["Предупреждение", '<span style="color:#f0a83c">' + p.warn + "</span>"]);
@@ -2592,6 +2589,15 @@ function dur(sec) {
   if (!sec) return "0 мин";
   var h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
   return h ? (h + " ч " + m + " мин") : (m + " мин");
+}
+// Ключи BMS: оба включены — одна зелёная плашка; запрет — красной
+// отдельно. Две зелёные «заряд» и «разряд» читались как два ключа (02.11.2026).
+function mosChips(chg, dsg) {
+  if (chg && dsg) return '<span class="chip green" style="margin:0">разрешены</span>';
+  var h = "";
+  if (!chg) h += '<span class="chip red" style="margin:0 6px 0 0">заряд запрещён</span>';
+  if (!dsg) h += '<span class="chip red" style="margin:0">разряд запрещён</span>';
+  return h;
 }
 function two(n) { return (n < 10 ? "0" : "") + n; }
 // Сутки и месяцы приходят числами от 1970 года по местному времени модуля;
