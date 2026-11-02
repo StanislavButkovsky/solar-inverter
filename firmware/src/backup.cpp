@@ -35,6 +35,7 @@ static const NvsKey NVSK[] = {
     { "batt",    "est",   'b' },
     { "pace",    "proto", 'c' },   // BMS по RS485: протокол и адреса
     { "pace",    "addr",  'b' },
+    { "pace",    "swap",  'c' },
 };
 static const uint8_t NNVSK = sizeof(NVSK) / sizeof(NVSK[0]);
 

@@ -287,6 +287,17 @@ static String   s_status = "ещё не искал";
 static String   s_raw[3];                     // ответы, которые не разобрались
 static uint8_t  s_nRaw = 0;
 static uint32_t s_okMs = 0;
+// TXD/RXD у модулей RS485 подписывают кто как: не нашлось — пробуем
+// выводы наоборот, удачное запоминаем. Счётчики — чтобы отличить «линия
+// молчит» (0 байт) от «что-то приходит, но не разбирается».
+static uint8_t  s_swap = 0;
+static volatile uint32_t s_rxBytes = 0, s_echo = 0;
+
+static void serBegin() {
+    s_ser.end();
+    s_ser.begin(BAUD, SERIAL_8N1, s_swap ? PIN_TX : PIN_RX, s_swap ? PIN_RX : PIN_TX);
+}
+static String pinsText() { return s_swap ? "RX 17, TX 18" : "RX 18, TX 17"; }
 
 static void rememberRaw(const String& r) {
     for (uint8_t i = 0; i < s_nRaw; i++) if (s_raw[i] == r) return;
@@ -312,11 +323,12 @@ static size_t asciiXfer(uint8_t ver, uint8_t addr, uint8_t cid2, char* rx, size_
     while (millis() - t0 < 700) {
         if (!s_ser.available()) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
         char c = s_ser.read();
+        s_rxBytes++;
         if (n == 0 && c != '~') continue;
         if (n < cap - 1) rx[n++] = c;
         if (c == '\r') {
             rx[n] = 0;
-            if (n == tn && !memcmp(rx, tx, tn)) { n = 0; continue; }   // эхо
+            if (n == tn && !memcmp(rx, tx, tn)) { n = 0; s_echo++; continue; }   // эхо
             return n;
         }
     }
@@ -335,7 +347,8 @@ static size_t modbusXfer(uint8_t addr, uint16_t reg, uint16_t cnt, uint8_t* rx, 
     while (millis() - t0 < 700 && n < want && n < cap) {
         if (!s_ser.available()) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
         rx[n++] = s_ser.read();
-        if (n == 8 && !memcmp(rx, tx, 8)) n = 0;            // эхо
+        s_rxBytes++;
+        if (n == 8 && !memcmp(rx, tx, 8)) { n = 0; s_echo++; }   // эхо
         if (n == 5 && rx[1] == 0x83) return 0;              // ошибка Modbus — адрес жив, но отказал
     }
     return n;
@@ -376,6 +389,7 @@ static void save() {
     Preferences pr;
     if (!pr.begin("pace", false)) return;
     pr.putUChar("proto", s_proto);
+    pr.putUChar("swap", s_swap);
     pr.putBytes("addr", s_addr, s_n);
     pr.end();
 }
@@ -388,7 +402,7 @@ static void probe() {
         uint8_t pr = ORDER[pi];
         for (uint8_t a = 0; a < 16; a++) {
             if (pr == P_MODBUS && a == 0) continue;          // 0 в Modbus — широковещательный
-            s_status = String("ищу BMS: ") + PROTO_NAME[pr] + ", адрес " + a;
+            s_status = String("ищу BMS: ") + PROTO_NAME[pr] + ", адрес " + a + " (" + pinsText() + ")";
             PacePack p;
             if (!pollPack(pr, a, p, true)) { vTaskDelay(pdMS_TO_TICKS(120)); continue; }
             s_proto = pr;
@@ -402,12 +416,12 @@ static void probe() {
             }
             save();
             s_status = "на связи";
-            Serial.printf("[pace] %s, батарей: %u\n", PROTO_NAME[pr], s_n);
+            Serial.printf("[pace] %s, батарей: %u, выводы %s\n", PROTO_NAME[pr], s_n, pinsText().c_str());
             tgNotify("🔋 BMS батарей на связи: " + String(PROTO_NAME[pr]) + ", батарей " + String(s_n));
             return;
         }
     }
-    s_status = "BMS не отвечает — проверьте провода A/B и порт RS485";
+    s_status = "BMS не отвечает (" + pinsText() + ", принято байт: " + String(s_rxBytes) + ")";
 }
 
 static void publish() {
@@ -446,20 +460,22 @@ static void publish() {
 }
 
 static void task(void*) {
-    s_ser.begin(BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
     Preferences pr;
     if (pr.begin("pace", true)) {
         s_proto = pr.getUChar("proto", P_NONE);
+        s_swap = pr.getUChar("swap", 0);
         s_n = pr.getBytesLength("addr");
         if (s_n > NPACK) s_n = NPACK;
         if (s_n) pr.getBytes("addr", s_addr, s_n);
         pr.end();
     }
+    serBegin();
     uint16_t allFail = 0;
     vTaskDelay(pdMS_TO_TICKS(5000));
     for (;;) {
         if (s_proto == P_NONE || !s_n) {
             probe();
+            if (s_proto == P_NONE) { s_swap ^= 1; serBegin(); probe(); }          // и выводы наоборот
             if (s_proto == P_NONE) { vTaskDelay(pdMS_TO_TICKS(120000)); continue; }   // нет — раз в 2 минуты
         }
         bool any = false;
@@ -510,7 +526,8 @@ static String esc(String s) { s.replace("\"", "'"); return s; }
 String paceJson() {
     xSemaphoreTake(s_mx, portMAX_DELAY);
     String j = "{\"proto\":\"" + String(PROTO_NAME[s_proto]) + "\",\"status\":\"" + esc(s_status) +
-               "\",\"age\":" + String(s_okMs ? (millis() - s_okMs) / 1000 : 0) + ",\"packs\":[";
+               "\",\"age\":" + String(s_okMs ? (millis() - s_okMs) / 1000 : 0) + ",\"pins\":\"" + pinsText() +
+               "\",\"rx\":" + String(s_rxBytes) + ",\"echo\":" + String(s_echo) + ",\"packs\":[";
     for (uint8_t k = 0; k < s_n; k++) {
         const PacePack& p = s_pk[k];
         if (k) j += ",";
