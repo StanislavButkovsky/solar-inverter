@@ -121,7 +121,14 @@ static void startNtp() {
     static bool done = false;
     if (done) return;
     done = true;
-    configTime(3 * 3600, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+    // Серверы — адресами, не именами: тогда SNTP не ставит своих запросов
+    // DNS. Ядро Arduino 3.3 при первом hostByName после смены адреса
+    // чистит кэш DNS без замка TCP/IP, и висящий запрос SNTP получал
+    // обратный вызов из чужой задачи — assert «Required to lock TCPIP core»
+    // в sys_untimeout (снимок сбоя 02.11.2026: задача wx, HTTPS погоды).
+    // При слабом Wi-Fi запрос SNTP висит долго — отсюда сбои «через минуту
+    // после включения». Адреса — anycast time.google.com и time.cloudflare.com.
+    configTime(3 * 3600, 0, "216.239.35.0", "162.159.200.1", "216.239.35.4");
 }
 
 static void startMdns() {
