@@ -253,10 +253,19 @@ void evWatchLoop() {
     // Ключи и аварии имеют смысл только когда данные живые: у мёртвой связи
     // все поля нулевые, и без этой проверки журнал завалило бы ложными авариями.
     if (s.fresh) {
-        if (!pChg && s.chargeMos)      evAdd(EV_CHG_OK);
-        if (pChg && !s.chargeMos)      evAdd(EV_CHG_BLOCKED);
-        if (!pDsg && s.dischargeMos)   evAdd(EV_DSG_OK);
-        if (pDsg && !s.dischargeMos)   evAdd(EV_DSG_BLOCKED);
+        // Ключи известны, только когда BMS отдала ячейки: у HS35 их приносит
+        // PACE по RS485 через несколько секунд после включения, и до того
+        // «выключено» — не состояние, а незнание (02.11.2026 каждое включение
+        // писало «заряд снова разрешён»).
+        static bool pKnown = false;
+        bool known = s.cellCount > 0;
+        if (known && pKnown) {
+            if (!pChg && s.chargeMos)      evAdd(EV_CHG_OK);
+            if (pChg && !s.chargeMos)      evAdd(EV_CHG_BLOCKED);
+            if (!pDsg && s.dischargeMos)   evAdd(EV_DSG_OK);
+            if (pDsg && !s.dischargeMos)   evAdd(EV_DSG_BLOCKED);
+        }
+        pKnown = known;
 
         if (!pFault && fault) {
             char d[24];
