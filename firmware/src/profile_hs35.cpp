@@ -735,9 +735,14 @@ static void applyGbms(const char* f[], const char* line) {
     long soc10 = inum(f[5]);
     stateUpdate([&](BmsState& b) {
         bmsFresh(b);
-        b.voltage = inum(f[2]) / 10.0f;
-        b.current = amps;                 // минус — разряд
-        b.chargeState = amps > 0.5f ? 1 : (amps < -0.5f ? 2 : 0);
+        // Ток и напряжение — отсюда, только пока батареи не читаются
+        // напрямую (pace.cpp): GBMS держит ток 20–60 с и после старта
+        // отдаёт 0, а PACE — сумма батарей раз в 5 с.
+        if (!b.cellCount) {
+            b.voltage = inum(f[2]) / 10.0f;
+            b.current = amps;             // минус — разряд
+            b.chargeState = amps > 0.5f ? 1 : (amps < -0.5f ? 2 : 0);
+        }
         // Если ячейки читаются напрямую (pace.cpp), температуры — оттуда: там
         // их по четыре на батарею, здесь одна общая.
         if (!b.cellCount) b.tempMax = b.tempMin = (int16_t)(inum(f[4]) / 10);

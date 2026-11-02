@@ -101,7 +101,11 @@ static int32_t  s_outSlot = -1;                       // ячейка текущ
 
 bool statsTimeValid() { return time(nullptr) > 1700000000; }
 
-float statsBattAvgA() { return s_iAvg; }
+// Первые 2 минуты среднее ещё набирается от первого показания — прогноз по
+// нему врал в разы (02.11.2026 через 45 с после старта: «хватит на 36 ч» при
+// токе 14 А, на деле ~8 ч). Пока не набралось — 0, и прогноза нет.
+static uint32_t s_iAvgSince = 0;
+float statsBattAvgA() { return s_iAvgInit && millis() - s_iAvgSince > 120000 ? s_iAvg : 0; }
 
 uint32_t battEtaS(float soc, float capAh, float avgA, uint8_t low) {
     if (capAh <= 0 || fabsf(avgA) < 0.5f) return 0;
@@ -489,6 +493,7 @@ void statsLoop() {
         // Экспонента с постоянной ~3 минуты.
         if (b.fresh) {
             float a = dt / 180.0f;
+            if (!s_iAvgInit) s_iAvgSince = millis();
             s_iAvg = s_iAvgInit ? s_iAvg + a * (b.current - s_iAvg) : b.current;
             s_iAvgInit = true;
         }

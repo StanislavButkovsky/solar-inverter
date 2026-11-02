@@ -461,6 +461,17 @@ static void publish() {
             if (p.stOk) { chg = chg && p.chgMos; dsg = dsg && p.dsgMos; }
         }
         b.cellCount = n;
+        // Ток и напряжение батареи — отсюда: сумма токов, среднее напряжение.
+        // Точнее и чаще, чем GBMS через инвертор (profile_hs35.cpp).
+        float sumI = 0, sumV = 0;
+        uint8_t np = 0;
+        for (uint8_t k = 0; k < s_n; k++)
+            if (s_pk[k].ok) { sumI += s_pk[k].curA; sumV += s_pk[k].voltV; np++; }
+        if (np) {
+            b.current = sumI;
+            b.voltage = sumV / np;
+            b.chargeState = sumI > 0.5f ? 1 : (sumI < -0.5f ? 2 : 0);
+        }
         b.tempCount = tn;
         if (n) { b.cellMaxMv = mx; b.cellMinMv = mn; b.cellMaxNo = mxNo; b.cellMinNo = mnNo; }
         if (tn) { b.tempMax = tMax; b.tempMin = tMin; }
