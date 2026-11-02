@@ -20,6 +20,7 @@
 #include "events.h"
 #include "stats.h"
 #include "rtc.h"
+#include "disp.h"
 #include "ota.h"
 #include "tg.h"
 #include "bootlog.h"
@@ -99,6 +100,7 @@ void setup() {
     simStart();
     dalyStart();
     rtcStart();               // до статистики: с часами она сразу знает, какой сегодня день
+    dispStart();
     statsStart();
     evStart();                // журнал событий — во флеш, после монтирования LittleFS
     weatherStart();           // до бота: у них общий замок TLS
@@ -126,6 +128,7 @@ void loop() {
     evWatchLoop();
     statsLoop();
     rtcLoop();
+    dispLoop();
     otaLoop();
     tgLoop();
     bootLoop();

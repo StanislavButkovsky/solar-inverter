@@ -1052,6 +1052,37 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="sys">
     <div class="col c1"><div class="card">
+      <h2>Дисплей <span id="dp_chip" class="chip gray">—</span></h2>
+      <div class="sub" style="margin-bottom:8px">
+        Экран 2" на ST7789: заряд батареи, солнце, нагрузка, сеть и режим, раз
+        в секунду. Ночью (с 22 до 7) — своя яркость; 0 % — подсветка выключена.
+      </div>
+      <label>Яркость днём, %</label>
+      <input id="dp_day" inputmode="numeric">
+      <label>Яркость ночью, %</label>
+      <input id="dp_night" inputmode="numeric">
+      <label>Положение</label>
+      <select id="dp_flip"><option value="0">Как есть</option><option value="1">Перевернуть на 180°</option></select>
+      <label>Цвета</label>
+      <select id="dp_col">
+        <option value="1.0">Обычные</option>
+        <option value="0.0">Негатив — снять инверсию</option>
+        <option value="1.1">Красный и синий наоборот</option>
+        <option value="0.1">Негатив и красный с синим наоборот</option>
+      </select>
+      <div class="sub" style="margin-top:6px">
+        Если фон светлый, а цифры тёмные — выберите «Негатив»; если заряд
+        батареи не зелёный, а синий — «Красный и синий наоборот».
+      </div>
+      <label>Пароль модуля</label>
+      <input id="dp_pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="dpSave()">Сохранить</button></div>
+      <div class="sub" id="dp_msg" style="margin-top:8px"></div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="sys">
+    <div class="col c1"><div class="card">
       <h2>Оформление</h2>
       <div class="sub" style="margin-bottom:12px">
         Выбор хранится в самом браузере, поэтому у планшета на стене и у телефона
@@ -1233,6 +1264,7 @@ function setTab(t) {
   if (t === "inv") setTimeout(function () { isLoad(true); }, 0);
   if (t === "auto") setTimeout(scLoad, 0);
   if (t === "batt") { setTimeout(paceLoad, 0); setTimeout(bsLoad, 0); }
+  if (t === "sys") setTimeout(dpLoad, 0);
   window.scrollTo(0, 0);
 }
 function showSettings(t) { onSettings = true;  onStats = false; paint(); setTab(t || setTabNow); }
@@ -2069,6 +2101,24 @@ function scAdd() {
   scRules.push({ on: 1, d: 31, h: 7, m: 0, w: 0, c: 0, k: 0, o: 0 });
   scTouch();
 }
+/* ----------------------------------------- дисплей */
+function dpLoad() {
+  get("/api/disp", function (d) {
+    if (!d.on) { chip("dp_chip", "gray", "нет"); return; }
+    chip("dp_chip", "green", "работает");
+    $("dp_day").value = d.day; $("dp_night").value = d.night; $("dp_flip").value = d.flip;
+    $("dp_col").value = d.inv + "." + d.bgr;
+  });
+}
+function dpSave() {
+  var c = $("dp_col").value.split(".");
+  get("/api/disp?save=1&day=" + (+$("dp_day").value || 0) + "&night=" + (+$("dp_night").value || 0) +
+      "&flip=" + $("dp_flip").value + "&inv=" + c[0] + "&bgr=" + c[1] +
+      "&pass=" + encodeURIComponent($("dp_pass").value), function (r) {
+    $("dp_msg").innerHTML = r.ok ? "сохранено — экран обновится в течение секунды" : ("не сохранено: " + (r.error || "?"));
+  }, function () { $("dp_msg").innerHTML = "модуль не ответил"; });
+}
+
 function scSave() {
   var r = scRules.map(function (x) { return [x.on, x.d, x.h, x.m, x.w, x.c, x.k || 0, x.k ? x.o || 0 : 0].join("."); }).join(";");
   get("/api/sched?save=1&r=" + encodeURIComponent(r) + "&pass=" + encodeURIComponent($("sc_pass").value), function (res) {

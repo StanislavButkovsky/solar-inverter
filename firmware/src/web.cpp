@@ -7,6 +7,7 @@
 #include "backup.h"
 #include "web.h"
 #include "rtc.h"
+#include "disp.h"
 #include "webui_gz.h"
 #include "icon.h"
 #include "state.h"
@@ -488,6 +489,20 @@ void webStart() {
         }
         if (server.hasArg("test"))   tgTest(ch);
         if (server.hasArg("unbind")) tgUnbind(ch);
+        server.send(200, "application/json; charset=utf-8",
+                    err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
+    });
+
+    // Дисплей: яркость днём и ночью, переворот, цвета. Чтение открыто, запись — под паролем модуля.
+    server.on("/api/disp", HTTP_GET, []() {
+        if (!server.hasArg("save")) { server.send(200, "application/json; charset=utf-8", dispJson()); return; }
+        String err;
+        if (!otaPasswordSet())                        err = "сначала задайте пароль модуля";
+        else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
+        else {
+            auto a = [](const char* k) { return server.hasArg(k) ? (int)server.arg(k).toInt() : -1; };
+            err = dispSet(a("day"), a("night"), a("flip"), a("inv"), a("bgr"));
+        }
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));
     });

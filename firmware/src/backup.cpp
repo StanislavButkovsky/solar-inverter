@@ -18,6 +18,11 @@
 struct NvsKey { const char* ns; const char* key; char type; };
 static const NvsKey NVSK[] = {
     { "sched",   "r2",    'b' },   // расписание режимов
+    { "disp",    "day",   'c' },   // дисплей: яркость, переворот, цвета
+    { "disp",    "night", 'c' },
+    { "disp",    "flip",  'c' },
+    { "disp",    "inv",   'c' },
+    { "disp",    "bgr",   'c' },
     { "sched",   "r",     'b' },   // оно же прежнего вида — из старых копий
     { "invprof", "ver",   'q' },   // настройки инвертора, сверенные с панелью
     { "wx",      "k",     'b' },   // коэффициент панелей по дням
