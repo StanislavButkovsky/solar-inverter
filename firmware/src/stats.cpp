@@ -805,7 +805,7 @@ void powerWrite(void (*emit)(const String&)) {
     uint32_t end = localNow() / PWR_STEP;
     PwrRec* buf = s_pwrBuf;
     memset(buf, 0, sizeof(s_pwrBuf));
-    if (s_fs) readAt(F_PWR, 0, buf, sizeof(buf));
+    if (s_fs) readAt(F_PWR, 0, buf, sizeof(s_pwrBuf));
     PwrRec cur = pwrCurrent();
     emit("{\"valid\":true,\"step\":" + String(PWR_STEP) + ",\"end\":" + String(end));
     static const char* const KEYS[] = { "pv", "load", "batt", "grid", "soc" };
