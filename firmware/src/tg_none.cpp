@@ -11,6 +11,7 @@ void   tgLoop() {}
 void   tgNotify(const String&) {}
 void   tgOutage(bool, uint32_t) {}
 // absent — страница прячет вкладку Telegram.
+int8_t tgOnline() { return -1; }
 String tgStateJson() { return "{\"absent\":true,\"on\":false,\"chat\":false,\"low\":20,\"net\":false,\"err\":\"\"}"; }
 String tgSetToken(const String&, uint8_t) { return "бот в этой сборке выключен (NO_TG)"; }
 void   tgUnbind(uint8_t) {}

@@ -20,3 +20,4 @@ void   schedLoop();                     // из loop()
 String schedJson();                     // {"rules":[{"on":1,"d":31,"h":7,"m":0,"w":0,"c":0,"k":0,"o":0}…],"rise":мин,"set":мин}
 String schedSave(const String& rules);  // "on.дни.ч.м.что.код.от чего.сдвиг;…"; "" — сохранено, иначе ошибка
 String schedText();                     // для бота
+bool   schedNext(int& inMin, String& what); // ближайшее срабатывание: через сколько минут и «OPP → GRD»

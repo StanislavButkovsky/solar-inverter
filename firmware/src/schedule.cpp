@@ -202,6 +202,29 @@ void schedLoop() {
     }
 }
 
+bool schedNext(int& inMin, String& what) {
+    if (!statsTimeValid()) return false;
+    time_t loc = time(nullptr) + TZ_SEC;
+    struct tm lt;
+    gmtime_r(&loc, &lt);
+    int32_t day = loc / 86400;
+    int nowMin = lt.tm_hour * 60 + lt.tm_min, best = -1;
+    uint8_t wd = (lt.tm_wday + 6) % 7;
+    for (uint8_t i = 0; i < s_n; i++) {
+        const Rule& r = s_r[i];
+        if (!r.on) continue;
+        for (int ahead = 0; ahead <= 7; ahead++) {
+            int rm = ruleMin(r, day + ahead);
+            if (rm < 0 || !(r.d >> ((wd + ahead) % 7) & 1) || (ahead == 0 && rm <= nowMin)) continue;
+            int m = ahead * 1440 + rm - nowMin;
+            if (best < 0 || m < best) { best = m; what = String(r.w ? "CHP → " : "OPP → ") + NAME[r.w][r.c < 3 ? r.c : 0]; }
+            break;
+        }
+    }
+    inMin = best;
+    return best >= 0;
+}
+
 String schedJson() {
     String j = "{\"rules\":[";
     for (uint8_t i = 0; i < s_n; i++) {

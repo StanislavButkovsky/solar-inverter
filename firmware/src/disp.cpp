@@ -5,7 +5,7 @@
 void   dispStart() {}
 void   dispLoop() {}
 String dispJson() { return "{\"on\":false}"; }
-String dispSet(int, int, int, int, int) { return "дисплея на этой плате нет"; }
+String dispSet(int, int, int, int, int, int) { return "дисплея на этой плате нет"; }
 #else
 
 #include <SPI.h>
@@ -17,8 +17,10 @@ String dispSet(int, int, int, int, int) { return "дисплея на этой �
 #include "cfg.h"
 #include "net.h"
 #include "ota.h"
+#include "tg.h"
 #include "events.h"
 #include "weather.h"
+#include "schedule.h"
 #include "battlife.h"
 #include "inv_codes.h"
 #include "disp_font.h"
@@ -27,47 +29,61 @@ static const int PIN_SCK = 12, PIN_MOSI = 11, PIN_CS = 10, PIN_DC = 13, PIN_RST 
 static const int W = 240, H = 320;
 static const uint32_t SPI_HZ = 40000000;
 static const int32_t TZ_SEC = 3 * 3600;                  // как везде в прошивке
-static const uint8_t NPAGE = 5;
+static const uint8_t NPAGE = 6;
 static const uint32_t HOME_MS = 120000;                  // без нажатий — обратно на главный
-static const uint32_t WAKE_MS = 60000;                   // ночью при яркости 0 кнопка будит на минуту
+static const uint32_t WAKE_MS = 60000;                   // погашенный экран кнопка будит на минуту
+static const uint32_t ALERT_BRIGHT_MS = 600000;          // тревога: первые 10 мин — полная яркость
 static const int NPT = 288;                              // график: 24 ч по 5 минут
+static const char* const DOW[] = { "пн", "вт", "ср", "чт", "пт", "сб", "вс" };
 
 static SPIClass  s_spi(FSPI);
 static uint16_t* s_fb = nullptr;                         // кадр, байты уже в порядке для SPI
 static TaskHandle_t s_task = nullptr;
 
-// Настройки: яркость в %, остальное 0/1. Меняются со страницы — задача
-// перечитывает их перед кадром.
-static volatile uint8_t s_day = 80, s_night = 15, s_flip = 0, s_inv = 1, s_bgr = 0;
+// Настройки: яркость в %, гасить через sleep минут (0 — никогда), остальное
+// 0/1. Меняются со страницы — задача перечитывает их перед кадром.
+static volatile uint8_t s_day = 80, s_night = 15, s_flip = 0, s_inv = 1, s_bgr = 0, s_sleep = 0;
 static volatile bool s_reinit = false;
 
 // Что показывать: собирает loop(), рисует задача. Данные экранов, кроме
 // главного, собираются только пока экран открыт.
 struct DEv { char when[12]; char text[64]; char lv; };
 struct DData {
-    uint8_t  page;
-    bool     timeOk, wake;
+    uint8_t  page, bl;                 // экран; яркость, %, уже решённая в loop()
+    bool     timeOk;
     time_t   loc;
+    // шапка
+    int8_t   wifi, inet;               // Wi-Fi: 0 нет, 1 слабый, 2 хороший, 3 точка доступа; интернет: tgOnline()
+    bool     night;                    // идёт ночная зарядка
     // главный
     bool     invOk, gridOn, socKnown;
     uint8_t  mode, prioOut, prioChg, fault;
     int16_t  tempC;
     float    gridV, gridW, outW, pvW, battV, battI, soc;
     float    pvWh, gridWh, loadWh;
+    uint32_t etaS, gridLostS;          // хватит / до полного, с; сколько нет сети, с
+    char     next[64];                 // что сделает автоматика
     // график
     bool     gOk;
     int16_t  gPv[NPT], gLoad[NPT];
     uint8_t  gSoc[NPT];
+    // неделя
+    bool     wOk[7];
+    float    wPv[7], wLoad[7], wGrid[7];
+    uint8_t  wDow[7];
     // итоги: вчера, 7 дней, месяц
     bool     tOk[3];
     float    tPv[3], tLoad[3], tGrid[3];
-    float    price, fc1;
+    uint16_t tOut[3];
+    uint32_t tOutS[3];
+    float    price, fc0, fc1;
     // батарея
     bool     bOk;
     int16_t  tMin, tMax;
     float    chgLimA, cvV, socBms, capAh, ahOut, capEst;
     uint8_t  cells;
     uint16_t cMin, cMax, bFault, bWarn;
+    uint16_t cellMv[MAX_CELLS];
     // модуль
     char     ip[16], fw[48];
     bool     ap;
@@ -81,8 +97,7 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_have = false;
 
 static uint8_t  s_page = 0;
-static uint32_t s_lastPress = 0, s_heavyAt = 0;
-static volatile uint32_t s_wakeUntil = 0;
+static uint32_t s_lastPress = 0, s_heavyAt = 0, s_wakeUntil = 0, s_alertAt = 0, s_alertOffAt = 0, s_gridLostAt = 0;
 static volatile uint8_t s_blNow = 255;
 
 // ------------------------------------------------------------ провод
@@ -135,7 +150,7 @@ static constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
 static const uint16_t C_BG = rgb(12, 15, 21), C_LINE = rgb(38, 45, 60), C_TEXT = rgb(235, 238, 245),
                       C_DIM = rgb(130, 140, 160), C_GREEN = rgb(52, 199, 89), C_AMBER = rgb(255, 176, 32),
                       C_RED = rgb(255, 77, 79), C_SUN = rgb(255, 204, 51), C_BLUE = rgb(77, 163, 255),
-                      C_SUNFILL = rgb(92, 76, 22);
+                      C_SUNFILL = rgb(92, 76, 22), C_ALERT = rgb(200, 30, 40), C_WHITE = rgb(255, 255, 255);
 
 static inline uint16_t sw(uint16_t c) { return (c >> 8) | (c << 8); }
 
@@ -163,7 +178,7 @@ static void blend(int x, int y, uint16_t c, uint8_t a) {   // a — 0…15
     *p = sw((r << 11) | (g << 5) | bl);
 }
 
-// Линия толщиной 2 точки — для графика.
+// Линия толщиной 2 точки — для графика и значков.
 static void line(int x0, int y0, int x1, int y1, uint16_t c) {
     int dx = abs(x1 - x0), dy = -abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, e = dx + dy;
     for (;;) {
@@ -229,13 +244,21 @@ static String watts(float w) {
 }
 static String kwhv(float wh) { return dec(wh / 1000, wh >= 100000 ? 0 : 1); }
 static String kwh(float wh) { return kwhv(wh) + " кВт·ч"; }
+// 19200 → «5 ч 20 мин», 600 → «10 мин», больше двух суток — «> 2 сут»
+static String span(uint32_t s) {
+    uint32_t m = s / 60;
+    if (m >= 2880) return "> 2 сут";
+    if (m < 60) return String(m) + " мин";
+    return String(m / 60) + " ч" + (m % 60 ? " " + String(m % 60) + " мин" : String(""));
+}
+static String hmm(uint32_t s) { char b[12]; snprintf(b, sizeof(b), "%u:%02u", (unsigned)(s / 3600), (unsigned)(s / 60 % 60)); return b; }
 
 // Строка с подписью слева и значением справа; sub — вторая строка подписи.
 static void row(int y, const char* label, const String& value, uint16_t vc, const String& sub) {
-    text(FONT_S, 10, y + 18, label, C_DIM);
-    if (sub.length()) text(FONT_S, 10, y + 38, sub.c_str(), C_DIM, W - 20);
+    text(FONT_S, 10, y + 17, label, C_DIM);
+    if (sub.length()) text(FONT_S, 10, y + 36, sub.c_str(), C_DIM, W - 20);
     textR(FONT_M, W - 10, y + 20, value.c_str(), vc);
-    fill(10, y + 45, W - 20, 1, C_LINE);
+    fill(10, y + 42, W - 20, 1, C_LINE);
 }
 // Короткая строка — для батареи и модуля.
 static void row2(int y, const char* label, const String& value, uint16_t vc) {
@@ -246,31 +269,71 @@ static void row2(int y, const char* label, const String& value, uint16_t vc) {
     fill(10, y + 31, W - 20, 1, C_LINE);
 }
 
+// Значки шапки. x — левый край, y — низ.
+static void icoWifi(int x, int y, uint16_t c, uint16_t cross) {
+    int cx = x + 8, cy = y;
+    for (int dy = -14; dy <= 0; dy++)
+        for (int dx = -9; dx <= 9; dx++) {
+            if (abs(dx) > -dy + 1) continue;                    // клин вверх, 90°
+            float r = sqrtf(dx * dx + dy * dy);
+            if (r < 2.2f || (r > 5.5f && r < 7.8f) || (r > 10.5f && r < 12.8f)) fill(cx + dx, cy + dy, 1, 1, c);
+        }
+    if (cross) line(x + 1, y - 13, x + 15, y, cross);
+}
+static void icoMoon(int x, int y, uint16_t c) {
+    for (int dy = -7; dy <= 7; dy++)
+        for (int dx = -7; dx <= 7; dx++)
+            if (dx * dx + dy * dy <= 42 && (dx - 4) * (dx - 4) + (dy + 3) * (dy + 3) > 30) fill(x + 7 + dx, y - 7 + dy, 1, 1, c);
+}
+// Значки: Wi-Fi и интернет, ночная зарядка. Возвращает ширину.
+static int icons(const DData& d, int x, int y, bool draw) {
+    int w = 0;
+    if (d.wifi != 3) {
+        if (draw) {
+            uint16_t c = d.wifi == 0 ? C_RED : d.wifi == 1 ? C_AMBER : C_GREEN;
+            icoWifi(x + w, y, c, d.wifi == 0 ? C_RED : d.inet == 0 ? C_AMBER : 0);
+        }
+        w += 22;
+    }
+    if (d.night) { if (draw) icoMoon(x + w, y, C_BLUE); w += 18; }
+    return w;
+}
+
 static void header(const DData& d, const char* title) {
     static const char* const MON[] = { "янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек" };
+    // Тревога на главном: шапка красная — нет сети или авария.
+    bool red = !title && d.invOk && (!d.gridOn || d.fault);
+    if (red) fill(0, 0, W, 37, C_ALERT);
+    uint16_t tc = red ? C_WHITE : C_TEXT, dc = red ? C_WHITE : C_DIM;
     int x = 10;
     if (d.timeOk) {
         struct tm t;
         gmtime_r(&d.loc, &t);
         char b[24];
         snprintf(b, sizeof(b), "%02d:%02d", t.tm_hour, t.tm_min);
-        x = text(FONT_M, 10, 26, b, C_TEXT) + 8;
-        if (!title) {
-            snprintf(b, sizeof(b), "%d %s", t.tm_mday, MON[t.tm_mon]);
-            text(FONT_S, x, 26, b, C_DIM);
-        }
+        x = text(FONT_M, 10, 26, b, tc) + 8;
     }
-    if (title) {
-        char n[8];
-        snprintf(n, sizeof(n), "%u/%u", d.page + 1, NPAGE);
-        int nw = textW(FONT_S, n);
-        text(FONT_S, x, 26, title, C_TEXT, W - 10 - nw - 8 - x);
-        textR(FONT_S, W - 10, 26, n, C_DIM);
-    } else if (d.invOk) textR(FONT_S, W - 10, 26, d.gridOn ? "сеть есть" : "сети нет", d.gridOn ? C_GREEN : C_RED);
-    fill(0, 36, W, 1, C_LINE);
+    String right;
+    if (title) { char n[8]; snprintf(n, sizeof(n), "%u/%u", d.page + 1, NPAGE); right = n; }
+    else if (red && !d.gridOn) right = "сети нет " + hmm(d.gridLostS);
+    else if (red) right = "авария " + String(d.fault);
+    // «сеть есть» не пишем: видно в строке «Сеть», а пропала — шапка красная.
+    int rw = right.length() ? textW(FONT_S, right.c_str()) : 0;
+    int iw = red ? 0 : icons(d, 0, 0, false);
+    if (!title && !red && d.timeOk) {                     // дата — если влезает рядом со значками
+        struct tm t;
+        gmtime_r(&d.loc, &t);
+        char b[16];
+        snprintf(b, sizeof(b), "%d %s", t.tm_mday, MON[t.tm_mon]);
+        if (x + textW(FONT_S, b) + 8 + iw + 6 + rw <= W - 10) text(FONT_S, x, 26, b, dc);
+    }
+    if (title) text(FONT_S, x, 26, title, C_TEXT, W - 10 - rw - iw - 12 - x);
+    if (iw) icons(d, W - 10 - rw - iw - (rw ? 6 : 0), 27, true);
+    if (rw) textR(FONT_S, W - 10, 26, right.c_str(), dc);
+    fill(0, 37, W, 1, C_LINE);
 }
 
-// 1. Главный: батарея крупно, солнце, нагрузка, сеть, режим.
+// 1. Главный: батарея крупно, солнце, нагрузка, сеть, режим, что дальше.
 static void pageMain(const DData& d) {
     header(d, nullptr);
     float bw = d.battV * d.battI;
@@ -281,27 +344,31 @@ static void pageMain(const DData& d) {
         else { snprintf(b, sizeof(b), "%.1f", d.battV); for (char* p = b; *p; p++) if (*p == '.') *p = ','; }
         uint16_t sc = !d.socKnown ? C_TEXT : d.soc < 20 ? C_RED : d.soc < 50 ? C_AMBER : C_GREEN;
         text(FONT_L, 8, 116, b, sc);
-        textR(FONT_M, W - 10, 82, (dec(d.battV, 1) + " В").c_str(), C_TEXT);
+        textR(FONT_M, W - 10, 80, (dec(d.battV, 1) + " В").c_str(), C_TEXT);
         bool chg = bw > 20, dis = bw < -20;
         String p = String(chg ? "+" : dis ? "−" : "") + watts(bw);
-        textR(FONT_M, W - 10, 110, p.c_str(), chg ? C_GREEN : dis ? C_AMBER : C_DIM);
-        textR(FONT_S, W - 10, 130, chg ? "заряд" : dis ? "разряд" : "покой", C_DIM);
+        textR(FONT_M, W - 10, 106, p.c_str(), chg ? C_GREEN : dis ? C_AMBER : C_DIM);
+        String st = chg ? "заряд" : dis ? "разряд" : "покой";
+        if (d.etaS && dis) st = "хватит на " + span(d.etaS);
+        if (d.etaS && chg) st = "до 100% — " + span(d.etaS);
+        textR(FONT_S, W - 10, 128, st.c_str(), dis && d.etaS && d.etaS < 3600 ? C_RED : C_DIM);
         if (d.socKnown) {
-            fill(10, 140, W - 20, 8, C_LINE);
-            fill(10, 140, (int)((W - 20) * constrain(d.soc, 0.0f, 100.0f) / 100), 8, sc);
+            fill(10, 136, W - 20, 8, C_LINE);
+            fill(10, 136, (int)((W - 20) * constrain(d.soc, 0.0f, 100.0f) / 100), 8, sc);
         }
     } else text(FONT_M, 10, 100, "нет данных", C_DIM);
 
     const String dash = "—";
-    int y = 156;
+    int y = 150;
     row(y, "Солнце", d.invOk ? watts(d.pvW) : dash, d.pvW > 20 ? C_SUN : C_TEXT, "сегодня " + kwh(d.pvWh));
-    y += 48;
+    y += 44;
     row(y, "Нагрузка", d.invOk ? watts(d.outW) : dash, C_TEXT, "сегодня " + kwh(d.loadWh));
-    y += 48;
+    y += 44;
     String gv = String((int)lroundf(d.gridV)) + " В · ";
     row(y, "Сеть", !d.invOk ? dash : d.gridOn ? watts(d.gridW) : String("нет"), d.gridOn ? C_BLUE : C_RED,
         (d.gridOn ? gv : String("")) + "сегодня " + kwh(d.gridWh));
 
+    // Низ: режим (или связь, авария) и что сделает автоматика.
     String f;
     uint16_t fc = C_DIM;
     if (!d.invOk) { f = "нет связи с инвертором"; fc = C_RED; }
@@ -315,16 +382,18 @@ static void pageMain(const DData& d) {
         if (d.prioChg < 3) f += String("/") + CHP[d.prioChg];
         if (d.tempC) f += " · " + String(d.tempC) + " °C";
     }
-    text(FONT_S, 10, H - 8, f.c_str(), fc, W - 20);
+    if (d.next[0]) {
+        text(FONT_S, 10, H - 25, f.c_str(), fc, W - 20);
+        text(FONT_S, 10, H - 5, d.next, C_TEXT, W - 20);
+    } else text(FONT_S, 10, H - 6, f.c_str(), fc, W - 20);
 }
 
 // 2. График за 24 часа: солнце заливкой, нагрузка и заряд линиями.
 static void pageGraph(const DData& d) {
-    header(d, "За 24 часа");
+    header(d, "24 часа");
     if (!d.gOk) { text(FONT_M, 10, 100, "нет времени —", C_DIM); text(FONT_M, 10, 128, "графика нет", C_DIM); return; }
     const int X0 = 10, PW = W - 20, Y0 = 62, PH = 170, YB = Y0 + PH;
-    static int16_t pv[W], ld[W];
-    static int16_t sc[W];
+    static int16_t pv[W], ld[W], sc[W];
     int mx = 500;
     for (int c = 0; c < PW; c++) {
         int a = c * NPT / PW, b = (c + 1) * NPT / PW;
@@ -375,64 +444,110 @@ static void pageGraph(const DData& d) {
     text(FONT_S, X0, H - 8, ("сегодня " + kwhv(d.pvWh) + " / " + kwh(d.loadWh)).c_str(), C_TEXT, W - 20);
 }
 
-// 3. Итоги: вчера, неделя, месяц; прогноз на завтра.
-static void pageTotals(const DData& d) {
-    header(d, "Итоги, кВт·ч");
-    static const char* const T[3] = { "Вчера", "7 дней", "С 1-го числа" };
-    for (int k = 0; k < 3; k++) {
-        int y = 42 + k * 82;
-        text(FONT_M, 10, y + 22, T[k], C_TEXT);
-        if (!d.tOk[k]) { text(FONT_S, 10, y + 50, "нет данных", C_DIM); fill(10, y + 78, W - 20, 1, C_LINE); continue; }
-        if (d.price > 0) textR(FONT_M, W - 10, y + 22, (String((long)lroundf(d.tPv[k] / 1000 * d.price)) + " ₽").c_str(), C_GREEN);
-        static const char* const L[3] = { "солнце", "дом", "из сети" };
-        const float v[3] = { d.tPv[k], d.tLoad[k], d.tGrid[k] };
-        const uint16_t c[3] = { C_SUN, C_TEXT, C_BLUE };
-        for (int i = 0; i < 3; i++) {
-            int x = 10 + i * 78;
-            text(FONT_S, x, y + 46, L[i], C_DIM);
-            text(FONT_M, x, y + 70, kwhv(v[i]).c_str(), c[i]);
+// 3. Неделя: столбики по дням — солнце и дом, в доме — сколько из сети.
+static void pageWeek(const DData& d) {
+    header(d, "Неделя");
+    const int X0 = 10, PW = W - 20, Y0 = 66, PH = 170, YB = Y0 + PH, GW = PW / 7;
+    float mx = 1000, sp = 0, sl = 0;
+    int n = 0;
+    for (int k = 0; k < 7; k++) if (d.wOk[k]) { mx = max(mx, max(d.wPv[k], d.wLoad[k])); sp += d.wPv[k]; sl += d.wLoad[k]; n++; }
+    float top = ceilf(mx / 5000) * 5000;                  // шкала — кратно 5 кВт·ч
+    for (int k = 1; k <= 2; k++) fill(X0, YB - PH * k / 2, PW, 1, C_LINE);
+    fill(X0, YB, PW, 1, C_DIM);
+    text(FONT_S, X0, Y0 - 8, (String((int)(top / 1000)) + " кВт·ч").c_str(), C_DIM);
+    auto h = [&](float wh) { return (int)(wh * PH / top); };
+    for (int k = 0; k < 7; k++) {
+        int x = X0 + k * GW;
+        if (d.wOk[k]) {
+            fill(x + 4, YB - h(d.wPv[k]), 11, h(d.wPv[k]), C_SUN);
+            fill(x + 16, YB - h(d.wLoad[k]), 11, h(d.wLoad[k]), C_BLUE);
+            fill(x + 16, YB - h(d.wGrid[k]), 11, h(d.wGrid[k]), C_AMBER);
         }
-        fill(10, y + 78, W - 20, 1, C_LINE);
+        const char* dn = DOW[d.wDow[k] % 7];
+        text(FONT_S, x + GW / 2 - textW(FONT_S, dn) / 2, YB + 20, dn, k == 6 ? C_TEXT : C_DIM);
     }
-    if (d.fc1 >= 0) text(FONT_S, 10, H - 8, ("прогноз на завтра " + dec(d.fc1, 1) + " кВт·ч").c_str(), C_TEXT, W - 20);
+    int y = YB + 44, x = X0;
+    fill(x, y - 9, 10, 8, C_SUN);   x = text(FONT_S, x + 14, y, "солнце", C_DIM) + 10;
+    fill(x, y - 9, 10, 8, C_BLUE);  x = text(FONT_S, x + 14, y, "дом", C_DIM) + 10;
+    fill(x, y - 9, 10, 8, C_AMBER); text(FONT_S, x + 14, y, "из сети", C_DIM);
+    if (n) text(FONT_S, X0, H - 8, ("в день: солнце " + kwhv(sp / n) + ", дом " + kwhv(sl / n)).c_str(), C_TEXT, W - 20);
 }
 
-// 4. Батарея подробно: то, что BMS сообщает инвертору, и износ.
+// 4. Итоги: вчера, неделя, месяц; отключения; прогноз.
+static void pageTotals(const DData& d) {
+    header(d, "Итоги");
+    static const char* const T[3] = { "Вчера", "7 дней", "Месяц" };
+    const int CX[3] = { 10, 88, 166 };
+    text(FONT_S, CX[0], 58, "солнце", C_SUN);
+    text(FONT_S, CX[1], 58, "дом", C_TEXT);
+    text(FONT_S, CX[2], 58, "из сети", C_BLUE);
+    for (int k = 0; k < 3; k++) {
+        int y = 64 + k * 74;
+        int x = text(FONT_M, 10, y + 21, T[k], C_TEXT) + 8;
+        if (!d.tOk[k]) { text(FONT_S, x, y + 21, "нет данных", C_DIM); fill(10, y + 70, W - 20, 1, C_LINE); continue; }
+        if (d.price > 0) textR(FONT_M, W - 10, y + 21, (String((long)lroundf(d.tPv[k] / 1000 * d.price)) + " ₽").c_str(), C_GREEN);
+        const float v[3] = { d.tPv[k], d.tLoad[k], d.tGrid[k] };
+        const uint16_t c[3] = { C_SUN, C_TEXT, C_BLUE };
+        for (int i = 0; i < 3; i++) text(FONT_M, CX[i], y + 45, kwhv(v[i]).c_str(), c[i]);
+        String o = d.tOut[k] ? "отключений " + String(d.tOut[k]) + " · " + span(d.tOutS[k]) : String("отключений не было");
+        text(FONT_S, 10, y + 64, o.c_str(), d.tOut[k] ? C_AMBER : C_DIM, W - 20);
+        fill(10, y + 70, W - 20, 1, C_LINE);
+    }
+    if (d.fc0 >= 0) text(FONT_S, 10, H - 24, ("сегодня солнце " + kwhv(d.pvWh) + " из " + dec(d.fc0, 1)).c_str(), C_TEXT, W - 20);
+    if (d.fc1 >= 0) text(FONT_S, 10, H - 5, ("прогноз на завтра " + dec(d.fc1, 1) + " кВт·ч").c_str(), C_TEXT, W - 20);
+}
+
+// 5. Батарея подробно: то, что BMS сообщает инвертору, износ, ячейки.
 static void pageBatt(const DData& d) {
     header(d, "Батарея");
     if (!d.bOk) { text(FONT_M, 10, 100, "нет данных от BMS", C_DIM); return; }
-    int y = 42;
+    int y = 42, lim = d.cells ? 170 : 280;                // с ячейками — им нижняя часть
     String t = d.tMin != d.tMax ? String(d.tMin) + "…" + String(d.tMax) + " °C" : String(d.tMax) + " °C";
     row2(y, "Температура", t, d.tMax >= 45 || d.tMin <= 0 ? C_AMBER : C_TEXT); y += 34;
     row2(y, "Ток", String(d.battI > 0.05f ? "+" : d.battI < -0.05f ? "−" : "") + dec(fabsf(d.battI), 1) + " А",
          d.battI > 0.05f ? C_GREEN : d.battI < -0.05f ? C_AMBER : C_TEXT); y += 34;
-    if (d.socBms >= 0) { row2(y, "Заряд по BMS", String((int)lroundf(d.socBms)) + " %", C_TEXT); y += 34; }
-    if (d.chgLimA >= 0) { row2(y, "Лимит тока заряда", dec(d.chgLimA, 0) + " А", C_TEXT); y += 34; }
-    if (d.cvV > 0) { row2(y, "Напряжение заряда", dec(d.cvV, 1) + " В", C_TEXT); y += 34; }
-    if (d.cells) {
-        row2(y, "Ячейки", dec(d.cMin / 1000.0f, 3) + "–" + dec(d.cMax / 1000.0f, 3), C_TEXT); y += 34;
-        if (y < 250) { row2(y, "Разброс ячеек", String(d.cMax - d.cMin) + " мВ", d.cMax - d.cMin > 50 ? C_AMBER : C_TEXT); y += 34; }
-    }
-    if (d.capAh > 0 && y < 250) {
+    if (d.socBms >= 0 && y < lim) { row2(y, "Заряд по BMS", String((int)lroundf(d.socBms)) + " %", C_TEXT); y += 34; }
+    if (d.chgLimA >= 0 && y < lim) { row2(y, "Лимит тока заряда", dec(d.chgLimA, 0) + " А", C_TEXT); y += 34; }
+    if (d.cvV > 0 && y < lim) { row2(y, "Напряжение заряда", dec(d.cvV, 1) + " В", C_TEXT); y += 34; }
+    if (d.capAh > 0 && y < lim) {
         String c = dec(d.capAh, 0) + " А·ч";
         if (d.capEst > 0) c = dec(d.capEst, 0) + " из " + c;
         row2(y, "Ёмкость", c, C_TEXT); y += 34;
     }
-    if (d.capAh > 0 && y < 280) { row2(y, "Циклов (полных)", dec(d.ahOut / d.capAh, 1), C_TEXT); y += 34; }
+    if (d.capAh > 0 && y < lim) { row2(y, "Циклов (полных)", dec(d.ahOut / d.capAh, 1), C_TEXT); y += 34; }
+    if (d.cells) {
+        // Столбики ячеек: шкала от самой низкой до самой высокой с запасом,
+        // слабейшая — красным, сильнейшая — синим.
+        int n = min((int)d.cells, (int)MAX_CELLS), Y0 = 220, PH = 66, YB = Y0 + PH, bw = (W - 20) / n;
+        int lo = d.cMin - 10, hi = d.cMax + 10;
+        for (int i = 0; i < n; i++) {
+            uint16_t mv = d.cellMv[i];
+            if (!mv) continue;
+            int hh = 6 + (mv - lo) * (PH - 6) / max(1, hi - lo);
+            uint16_t c = mv == d.cMin ? C_RED : mv == d.cMax ? C_BLUE : C_GREEN;
+            fill(10 + i * bw, YB - hh, max(1, bw - 1), hh, c);
+        }
+        text(FONT_S, 10, Y0 - 6, ("ячейки, " + String(n) + " шт.").c_str(), C_DIM);
+        String s = dec(d.cMin / 1000.0f, 3) + "–" + dec(d.cMax / 1000.0f, 3) + ", разброс " + String(d.cMax - d.cMin) + " мВ";
+        text(FONT_S, 10, YB + 18, s.c_str(), d.cMax - d.cMin > 50 ? C_AMBER : C_TEXT, W - 20);
+    }
     if (d.bFault || d.bWarn) {
         String s = d.bFault ? "BMS: авария " + String(d.bFault) : "BMS: предупреждение " + String(d.bWarn);
-        text(FONT_S, 10, H - 8, s.c_str(), d.bFault ? C_RED : C_AMBER, W - 20);
+        fill(0, H - 24, W, 24, C_BG);
+        text(FONT_S, 10, H - 6, s.c_str(), d.bFault ? C_RED : C_AMBER, W - 20);
     }
 }
 
-// 5. Модуль: сеть, работа, последние события.
+// 6. Модуль: сеть, работа, последние события.
 static void pageModule(const DData& d) {
     header(d, "Модуль");
     int y = 42;
     row2(y, d.ap ? "Точка доступа" : "Адрес", d.ip, C_TEXT); y += 34;
     if (!d.ap) {
         uint16_t c = d.rssi > -67 ? C_GREEN : d.rssi > -80 ? C_AMBER : C_RED;
-        row2(y, "Wi-Fi", d.rssi ? String(d.rssi) + " дБм" : String("нет"), d.rssi ? c : C_RED); y += 34;
+        String w = d.rssi ? String(d.rssi) + " дБм" : String("нет");
+        if (d.rssi && d.inet == 0) w += ", без интернета";
+        row2(y, "Wi-Fi", w, d.rssi && d.inet != 0 ? c : C_RED); y += 34;
     }
     uint32_t m = d.upS / 60;
     String up = m >= 1440 ? String(m / 1440) + " д " + String(m / 60 % 24) + " ч" : String(m / 60) + " ч " + String(m % 60) + " мин";
@@ -454,27 +569,16 @@ static void render(const DData& d) {
     fill(0, 0, W, H, C_BG);
     switch (d.page) {
     case 1:  pageGraph(d);  break;
-    case 2:  pageTotals(d); break;
-    case 3:  pageBatt(d);   break;
-    case 4:  pageModule(d); break;
+    case 2:  pageWeek(d);   break;
+    case 3:  pageTotals(d); break;
+    case 4:  pageBatt(d);   break;
+    case 5:  pageModule(d); break;
     default: pageMain(d);   break;
     }
 }
 
 // ------------------------------------------------------------ задача
-static void backlight(const DData& d) {
-    uint8_t pct = s_day;
-    if (d.timeOk) {
-        int h = (d.loc / 3600) % 24;
-        if (h >= 22 || h < 7) pct = s_night;
-    }
-    if (!pct && d.wake) pct = s_day ? s_day : 50;
-    if (pct == s_blNow) return;
-    s_blNow = pct;
-    ledcWrite(PIN_BL, (uint32_t)pct * 255 / 100);
-}
-
-static DData s_rd;                                        // копия для задачи: 2+ КБ — не на стек
+static DData s_rd;                                        // копия для задачи: 4 КБ — не на стек
 static void task(void*) {
     panelInit();
     for (;;) {
@@ -484,9 +588,9 @@ static void task(void*) {
         portENTER_CRITICAL(&s_mux);
         memcpy(&s_rd, &s_d, sizeof(DData));
         portEXIT_CRITICAL(&s_mux);
-        render(s_rd);
-        push();
-        backlight(s_rd);
+        // Погашенный экран не рисуем — только держим подсветку выключенной.
+        if (s_rd.bl) { render(s_rd); push(); }
+        if (s_rd.bl != s_blNow) { s_blNow = s_rd.bl; ledcWrite(PIN_BL, (uint32_t)s_rd.bl * 255 / 100); }
     }
 }
 
@@ -498,6 +602,7 @@ static void load() {
     s_flip = p.getUChar("flip", 0);
     s_inv = p.getUChar("inv", 1);
     s_bgr = p.getUChar("bgr", 0);
+    s_sleep = p.getUChar("sleep", 0);
     p.end();
 }
 
@@ -517,8 +622,7 @@ void dispStart() {
     Serial.println("[дисплей] ST7789 240×320, SPI 40 МГц, кнопка экранов — GPIO 4");
 }
 
-// Кнопка: короткое нажатие — следующий экран; при погашенной подсветке —
-// только разбудить.
+// Кнопка: короткое нажатие — true.
 static bool button() {
     static bool raw = true, st = true;
     static uint32_t at = 0;
@@ -570,25 +674,57 @@ static uint8_t events(DEv* out, uint8_t n, bool timeOk, time_t loc) {
     return k;
 }
 
+// Что сделает автоматика: ближайшее из расписания и ночной зарядки —
+// «в 16:41 включу GRD», «завтра в 07:00 включу PBG», «в 23:00 — ночной заряд от сети».
+static void nextAction(DData& d) {
+    d.next[0] = 0;
+    if (!d.timeOk) return;
+    struct tm lt;
+    gmtime_r(&d.loc, &lt);
+    int nowMin = lt.tm_hour * 60 + lt.tm_min, best = -1, in;
+    String what, sw;
+    if (schedNext(in, sw)) {
+        best = in;
+        sw.replace("OPP → ", "");
+        sw.replace("CHP → ", "CHP ");
+        what = sw;
+    }
+    const Config& c = cfg();
+    if (c.autoOn && c.autoFrom != c.autoTo) {
+        if (d.night) {
+            int m = (c.autoTo * 60 - nowMin + 1440) % 1440;
+            if (best < 0 || m < best) { best = m; what = "конец ночного заряда"; }
+        } else if (d.fc1 >= 0 && d.fc1 < c.autoBelow) {
+            int m = (c.autoFrom * 60 - nowMin + 1440) % 1440;
+            if (best < 0 || m < best) { best = m; what = "ночной заряд от сети"; }
+        }
+    }
+    if (best < 0) return;
+    int ahead = (nowMin + best) / 1440, at = (nowMin + best) % 1440;
+    char b[8];
+    snprintf(b, sizeof(b), "%02d:%02d", at / 60, at % 60);
+    String when = ahead == 0 ? "" : ahead == 1 ? "завтра " : String(DOW[((lt.tm_wday + 6) % 7 + ahead) % 7]) + " ";
+    bool sched = what.length() <= 8;                      // «GRD», «CHP PNG» — из расписания
+    strlcpy(d.next, (when + "в " + b + (sched ? " включу " : " — ") + what).c_str(), sizeof(d.next));
+}
+
 void dispLoop() {
     if (!s_task) return;
     static uint32_t last = 0;
+    uint32_t now = millis();
     if (button()) {
-        s_lastPress = millis();
-        if (s_blNow == 0) s_wakeUntil = millis() + WAKE_MS;
+        bool dark = s_blNow == 0;
+        s_lastPress = now;
+        if (dark) s_wakeUntil = now + WAKE_MS;            // погашен — только разбудить
         else s_page = (s_page + 1) % NPAGE;
         last = 0;
         s_heavyAt = 0;
     }
-    if (s_page && millis() - s_lastPress > HOME_MS) { s_page = 0; last = 0; }
-    if (last && millis() - last < 1000) return;
-    last = millis() | 1;
+    if (s_page && now - s_lastPress > HOME_MS) { s_page = 0; last = 0; }
+    if (last && now - last < 1000) return;
+    last = now | 1;
 
-    // Собираем в s_d прямо под замком нельзя (снапшоты и файлы — долго):
-    // готовим всё заранее, под замком только копируем.
-    static DData d;
-    d.page = s_page;
-    d.wake = (int32_t)(s_wakeUntil - millis()) > 0;
+    static DData d;                                       // тяжёлое держится между кадрами
     d.timeOk = statsTimeValid();
     d.loc = time(nullptr) + TZ_SEC;
     InvState v = invSnapshot();
@@ -602,14 +738,56 @@ void dispLoop() {
     if (v.pvKwhToday >= 0) d.pvWh = v.pvKwhToday * 1000;          // как на странице: счётчик инвертора, если есть
     if (v.gridKwhToday >= 0) d.gridWh = v.gridKwhToday * 1000;
     if (v.loadKwhToday >= 0) d.loadWh = v.loadKwhToday * 1000;
+    // Хватит / до полного — по среднему току за 3 мин, как в боте.
+    d.etaS = d.socKnown ? battEtaS(d.soc, b.capAh, statsBattAvgA(), cfg().tgSocLow) : 0;
+    d.night = weatherChargeActive();
+    d.ap = netIsAp();
+    d.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+    d.wifi = d.ap ? 3 : !d.rssi ? 0 : d.rssi > -80 ? 2 : 1;
+    d.inet = tgOnline();
 
-    // Тяжёлое (файлы статистики, журнал) — только для открытого экрана и не
-    // чаще раза в 30 с.
-    bool heavy = !s_heavyAt || millis() - s_heavyAt > 30000;
-    if (heavy && s_page) s_heavyAt = millis();
+    // Тревога: нет сети, авария инвертора или заряд ниже порога бота —
+    // главный экран, полная яркость первые 10 мин. Кончилась — через минуту
+    // всё как обычно.
+    bool gridLost = d.invOk && !d.gridOn;
+    if (gridLost && !s_gridLostAt) s_gridLostAt = now | 1;
+    if (!gridLost) s_gridLostAt = 0;
+    d.gridLostS = s_gridLostAt ? (now - s_gridLostAt) / 1000 : 0;
+    bool alert = gridLost || (d.invOk && d.fault) || (d.socKnown && d.battV > 1 && d.soc < cfg().tgSocLow);
+    if (alert) {
+        s_alertOffAt = 0;
+        if (!s_alertAt) { s_alertAt = now | 1; s_page = 0; s_lastPress = now; s_heavyAt = 0; }
+    } else if (s_alertAt) {
+        if (!s_alertOffAt) s_alertOffAt = now | 1;
+        if (now - s_alertOffAt > 60000) s_alertAt = s_alertOffAt = 0;
+    }
+    d.page = s_page;
+
+    // Яркость: день/ночь; хранитель экрана гасит через s_sleep минут без
+    // нажатий (не при тревоге); кнопка будит на минуту.
+    uint8_t pct = s_day;
+    if (d.timeOk) { int h = (d.loc / 3600) % 24; if (h >= 22 || h < 7) pct = s_night; }
+    bool woke = (int32_t)(s_wakeUntil - now) > 0;
+    if (s_sleep && !s_alertAt && !woke && now - s_lastPress > (uint32_t)s_sleep * 60000) pct = 0;
+    if (!pct && (woke || s_alertAt)) pct = s_day ? s_day : 50;
+    if (s_alertAt && now - s_alertAt < ALERT_BRIGHT_MS) pct = 100;
+    d.bl = pct;
+
+    // Тяжёлое (файлы статистики, журнал) — для открытого экрана, не чаще раза в 30 с.
+    bool heavy = !s_heavyAt || now - s_heavyAt > 30000;
+    if (heavy) { s_heavyAt = now | 1; d.fc0 = weatherPvKwh(0); d.fc1 = weatherPvKwh(1); nextAction(d); }
+    uint32_t day = statsDay();
     if (heavy && s_page == 1) d.gOk = statsPower24(d.gPv, d.gLoad, d.gSoc);
     if (heavy && s_page == 2) {
-        uint32_t day = statsDay();
+        for (int k = 0; k < 7; k++) {
+            StatSum s;
+            uint32_t dd = day - 6 + k;
+            d.wOk[k] = day && statsSum(dd, dd, s) && s.dataS > 0;
+            d.wPv[k] = d.wOk[k] ? s.pvWh : 0; d.wLoad[k] = d.wOk[k] ? s.loadWh : 0; d.wGrid[k] = d.wOk[k] ? s.gridWh : 0;
+            d.wDow[k] = (dd + 3) % 7;                     // 1.1.1970 — четверг; пн = 0
+        }
+    }
+    if (heavy && s_page == 3) {
         struct tm lt;
         gmtime_r(&d.loc, &lt);
         const uint32_t from[3] = { day - 1, day - 6, day - (lt.tm_mday - 1) }, to[3] = { day - 1, day, day };
@@ -617,23 +795,22 @@ void dispLoop() {
             StatSum s;
             d.tOk[k] = day && statsSum(from[k], to[k], s) && s.dataS > 0;
             d.tPv[k] = d.tOk[k] ? s.pvWh : 0; d.tLoad[k] = d.tOk[k] ? s.loadWh : 0; d.tGrid[k] = d.tOk[k] ? s.gridWh : 0;
+            d.tOut[k] = d.tOk[k] ? s.outages : 0; d.tOutS[k] = d.tOk[k] ? s.outageS : 0;
         }
         d.price = cfg().price;
-        d.fc1 = weatherPvKwh(1);
     }
-    if (s_page == 3) {
+    if (s_page == 4) {
         d.bOk = b.voltage > 1;
         d.tMin = b.tempMin; d.tMax = b.tempMax;
         d.chgLimA = b.chgLimitA; d.cvV = b.cvV; d.socBms = b.socBms; d.capAh = b.capAh;
         d.cells = b.cellCount; d.cMin = b.cellMinMv; d.cMax = b.cellMaxMv;
+        memcpy(d.cellMv, b.cellMv, sizeof(d.cellMv));
         d.bFault = b.bmsFault; d.bWarn = b.bmsWarn;
         battLifeInfo(d.ahOut, d.capEst);
     }
-    if (s_page == 4) {
-        d.ap = netIsAp();
+    if (s_page == 5) {
         strlcpy(d.ip, netIp().c_str(), sizeof(d.ip));
-        d.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
-        d.upS = millis() / 1000;
+        d.upS = now / 1000;
         d.heapMin = ESP.getMinFreeHeap();
         String fw = fwBuild();                            // «02.11.2026 18:57, ab52422» → «ab52422 · 02.11»
         int c = fw.indexOf(", ");
@@ -650,26 +827,28 @@ void dispLoop() {
 
 String dispJson() {
     return "{\"on\":" + String(s_task ? "true" : "false") + ",\"day\":" + String(s_day) + ",\"night\":" + String(s_night) +
-           ",\"flip\":" + String(s_flip) + ",\"inv\":" + String(s_inv) + ",\"bgr\":" + String(s_bgr) + "}";
+           ",\"flip\":" + String(s_flip) + ",\"inv\":" + String(s_inv) + ",\"bgr\":" + String(s_bgr) +
+           ",\"sleep\":" + String(s_sleep) + "}";
 }
 
-String dispSet(int day, int night, int flip, int inv, int bgr) {
+String dispSet(int day, int night, int flip, int inv, int bgr, int sleep) {
     if (day > 100 || night > 100) return "яркость — от 0 до 100 %";
+    if (sleep > 120) return "гасить — не позже чем через 120 мин";
     if (day >= 0) s_day = day;
     if (night >= 0) s_night = night;
+    if (sleep >= 0) s_sleep = sleep;
     bool re = false;
     if (flip >= 0 && flip != s_flip) { s_flip = flip ? 1 : 0; re = true; }
     if (inv >= 0 && inv != s_inv) { s_inv = inv ? 1 : 0; re = true; }
     if (bgr >= 0 && bgr != s_bgr) { s_bgr = bgr ? 1 : 0; re = true; }
-    s_blNow = 255;                                        // яркость применится со следующим кадром
+    s_lastPress = millis();                               // после настройки экран не гаснет сразу
     if (re) s_reinit = true;
     Preferences p;
     if (p.begin("disp", false)) {
-        p.putUChar("day", s_day); p.putUChar("night", s_night);
+        p.putUChar("day", s_day); p.putUChar("night", s_night); p.putUChar("sleep", s_sleep);
         p.putUChar("flip", s_flip); p.putUChar("inv", s_inv); p.putUChar("bgr", s_bgr);
         p.end();
     }
-    if (s_task) xTaskNotifyGive(s_task);
     return "";
 }
 #endif

@@ -1079,6 +1079,16 @@ static String chanJson(uint8_t ch) {
     return j;
 }
 
+int8_t tgOnline() {
+    int8_t r = -1;
+    for (uint8_t ch = 0; ch < NCH; ch++) {
+        if (!token(ch).length()) continue;
+        if (!s_ch[ch].err.length()) return 1;
+        r = 0;
+    }
+    return r;
+}
+
 // Telegram — на верхнем уровне, как было; MAX — в "max".
 String tgStateJson() {
     String j = "{" + chanJson(CH_TG);

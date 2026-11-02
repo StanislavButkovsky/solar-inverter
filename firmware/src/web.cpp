@@ -501,7 +501,7 @@ void webStart() {
         else if (server.arg("pass") != cfg().webPass) err = "неверный пароль";
         else {
             auto a = [](const char* k) { return server.hasArg(k) ? (int)server.arg(k).toInt() : -1; };
-            err = dispSet(a("day"), a("night"), a("flip"), a("inv"), a("bgr"));
+            err = dispSet(a("day"), a("night"), a("flip"), a("inv"), a("bgr"), a("sleep"));
         }
         server.send(200, "application/json; charset=utf-8",
                     err.length() ? "{\"ok\":false,\"error\":\"" + jsonEsc(err) + "\"}" : String("{\"ok\":true}"));

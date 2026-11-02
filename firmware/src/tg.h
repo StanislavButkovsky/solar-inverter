@@ -24,6 +24,7 @@ void   tgLoop();                                 // из loop(): следит з
 void   tgNotify(const String& text);             // поставить сообщение в очередь
 void   tgOutage(bool started, uint32_t seconds); // из статистики: подтверждённое отключение
 String tgStateJson();                            // для /api/state
+int8_t tgOnline();                               // есть ли интернет по боту: 1 да, 0 ошибки связи, −1 бот не настроен
 // ch: 0 — Telegram, 1 — MAX. Каналы независимы: можно включить любой или оба.
 String tgSetToken(const String& token, uint8_t ch = 0);   // пусто — выключить; вернёт ошибку или ""
 void   tgUnbind(uint8_t ch = 0);                 // отвязать чат, выдать новый код
