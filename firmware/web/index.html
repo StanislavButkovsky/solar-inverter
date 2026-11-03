@@ -64,6 +64,8 @@ body.light .mx_leg em { color: #667085; }
 body.light .chip.solidred { background: #e5573f; color: #fff; }
 
 /* ------------------------------------------------ раскладка */
+/* На мониторе страница не шире 1180 px — иначе блоки растягиваются на весь экран. */
+#dash, #stats, #settings, .foot { max-width: 1180px; margin-left: auto; margin-right: auto; }
 .row { font-size: 0; margin: 0 -5px; }
 .col { display: inline-block; vertical-align: top; padding: 5px; font-size: 15px; }
 .c1  { width: 100%; }
@@ -154,7 +156,13 @@ label { display: block; color: #8a93a5; font-size: 12px; margin: 12px 0 5px; }
 /* ------------------------------------------------ схема потоков мощности
    SVG здесь уместен: целевое устройство — iPhone 6 Plus на iOS 12, Safari 12
    рисует и SVG, и CSS-анимации без оговорок. */
-.flowbox { width: 100%; height: auto; display: block; }
+.flowbox { width: 100%; max-width: 460px; height: auto; display: block; margin: 0 auto; }
+/* На широком экране схема и таблица — рядом: схема на всю ширину монитора
+   выходила с блоками в полэкрана (03.11.2026). */
+@media (min-width: 900px) {
+  .flowgrid { display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: 28px; align-items: center; }
+  .flowgrid .kv { margin-top: 0 !important; }
+}
 .fl { fill: none; stroke: #2f3a4a; stroke-width: 3; stroke-linecap: round; }
 .fl.on { stroke-dasharray: 7 6; -webkit-animation: dash 1.1s linear infinite;
          animation: dash 1.1s linear infinite; }
@@ -341,6 +349,7 @@ body.light pre.rep { background: #f2f4f8; }
           <div class="mx_leg" id="mx_leg"></div>
         </div>
 
+        <div class="flowgrid">
         <svg class="flowbox" viewBox="0 0 320 232" preserveAspectRatio="xMidYMid meet">
           <!-- линии рисуются первыми, чтобы уходить под блоки -->
           <line id="f_pv"   class="fl" x1="96"  y1="40"  x2="126" y2="98"  stroke="#f0a83c"/>
@@ -381,6 +390,7 @@ body.light pre.rep { background: #f2f4f8; }
           <tr id="i_pcrow"><td>Приоритет заряда</td><td id="i_pc">—</td></tr>
           <tr id="i_btrow"><td>Тип батареи</td><td id="i_bt">—</td></tr>
         </table>
+        </div>
       </div></div>
     </div>
 
