@@ -102,6 +102,28 @@ body.light .chip.solidred { background: #e5573f; color: #fff; }
   .hero .big { font-size: 64px; }
 }
 .tile .v span { font-size: 15px; font-weight: 400; color: #8a93a5; }
+/* Значение в плитке — тоже <span> (с id): крупно и ярко, как раньше
+   задумывалось; мелким серым — только единицы. */
+.tile .v span[id]:not([id$="unit"]) { font-size: inherit; font-weight: inherit; color: inherit; }
+
+/* Монитор: блоки рядом, а не столбиком (03.11.2026: процент заряда на всю
+   ширину, таблица солнца под плитками). На телефоне — как было. */
+@media (min-width: 900px) {
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .split .kv { margin-top: 0 !important; }
+  .battgrid { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); }
+  .battgrid > div:first-child, .battgrid > div:first-child .row,
+  .battgrid > div:first-child .col, .battgrid > div:first-child .card { height: 100%; }
+  .battgrid .hero { display: flex; flex-direction: column; justify-content: center; }
+  .battgrid .hero .big { font-size: 60px; }
+  .battgrid > div:last-child .row { margin-left: 0; }
+  #pace_list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 28px; }
+}
+/* По батарее в ряд: 15 или 16 ячеек — сразу видно, какая чья. */
+@media (min-width: 1000px) {
+  .cellbox.p15 .cell { width: 6.666%; }
+  .cellbox.p16 .cell { width: 6.25%; }
+}
 
 /* ------------------------------------------------ ячейки */
 .cellbox { font-size: 0; margin: 0 -3px; }
@@ -413,6 +435,7 @@ body.light pre.rep { background: #f2f4f8; }
     <div class="row">
       <div class="col c1"><div class="card">
         <h2>Солнечные панели</h2>
+        <div class="split">
         <div class="row">
           <div class="col c4"><div class="tile">
             <div class="k">Сейчас</div>
@@ -431,9 +454,11 @@ body.light pre.rep { background: #f2f4f8; }
           <tr><td>Прогноз на сегодня</td><td id="sol_fc0">—</td></tr>
           <tr><td>Прогноз на завтра</td><td id="sol_fc1">—</td></tr>
         </table>
+        </div>
       </div></div>
     </div>
 
+    <div class="battgrid"><div>
     <div class="row">
       <div class="col c1"><div class="card hero">
         <div class="big"><b id="soc">—</b><span> %</span></div>
@@ -448,6 +473,7 @@ body.light pre.rep { background: #f2f4f8; }
         </div>
       </div></div>
     </div>
+    </div><div>
 
     <div class="row">
       <div class="col c3"><div class="card tile">
@@ -473,6 +499,7 @@ body.light pre.rep { background: #f2f4f8; }
         <div class="k">Состояние BMS</div><div class="v" style="font-size:18px;padding-top:6px" id="bstate">—</div>
       </div></div>
     </div>
+    </div></div>
 
     <div class="row" id="cellsrow">
       <div class="col c1"><div class="card">
@@ -1529,8 +1556,12 @@ function render(s) {
   // Запас в киловатт-часах — это ампер-часы на текущее напряжение сборки.
   // Оценка мгновенная: под нагрузкой напряжение просядет и цифра слегка уменьшится.
   var kwh = b.remainAh * b.v / 1000;
+  // Две батареи параллельно — «2 × 15S», а не «30S» (это была бы одна на 96 В).
+  var pk = paceData && paceData.packs ? paceData.packs.filter(function (q) { return q.ok && q.cells.length; }) : [];
+  var sLbl = pk.length > 1 && pk.every(function (q) { return q.cells.length === pk[0].cells.length; })
+      ? pk.length + " × " + pk[0].cells.length + "S" : b.cellCount + "S";
   $("soccap").innerHTML = b.cellCount
-      ? (b.cellCount + "S · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 1) + " А·ч")
+      ? (sLbl + " · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 1) + " А·ч")
       : (l.linked && b.v > 0
           ? (socKnown ? "по данным инвертора · " + fmt(b.v, 1) + " В" +
                         (b.remainAh ? " · " + fmt(kwh, 2) + " кВт·ч · " + fmt(b.remainAh, 0) + " А·ч" : "")
@@ -1614,6 +1645,8 @@ function render(s) {
     }
   }
   $("cellpacks").innerHTML = cp.length > 1 ? cp.join(", ") : "";
+  var per = pk.length ? pk[0].cells.length : b.cellCount;
+  $("cells").className = "cellbox" + (per === 15 ? " p15" : per === 16 ? " p16" : "");
   // Шкала под химию: LiFePO4 2,8…3,65 В, NMC 3,0…4,2 В.
   var lfp = b.maxMv > 0 && b.maxMv < 3750;
   for (var i = 0; i < cellNodes.length; i++) {
@@ -2068,8 +2101,8 @@ function paceRender() {
   var h = "", f1 = function (v) { return String(v.toFixed(1)).replace(".", ","); };
   for (var i = 0; i < n; i++) {
     var p = d.packs[i];
-    h += '<div class="is_g">Батарея ' + (i + 1) + ' <span style="text-transform:none;letter-spacing:0">· адрес ' + p.addr + '</span></div>';
-    if (!p.ok) { h += '<div class="sub">нет ответа</div>'; continue; }
+    h += '<div><div class="is_g">Батарея ' + (i + 1) + ' <span style="text-transform:none;letter-spacing:0">· адрес ' + p.addr + '</span></div>';
+    if (!p.ok) { h += '<div class="sub">нет ответа</div></div>'; continue; }
     var mn = Math.min.apply(null, p.cells), mx = Math.max.apply(null, p.cells), bal = 0;
     for (var c = 0; c < 16; c++) if ((p.bal >> c) & 1) bal++;
     var rows = [
@@ -2085,7 +2118,7 @@ function paceRender() {
     if (p.warn)  rows.push(["Предупреждение", '<span style="color:#f0a83c">' + p.warn + "</span>"]);
     h += '<table class="kv">';
     for (var z = 0; z < rows.length; z++) h += "<tr><td>" + rows[z][0] + "</td><td>" + rows[z][1] + "</td></tr>";
-    h += "</table>";
+    h += "</table></div>";
   }
   $("pace_list").innerHTML = h;
 }
