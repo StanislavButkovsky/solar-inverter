@@ -106,8 +106,21 @@ bool statsTimeValid() { return time(nullptr) > 1700000000; }
 // деле ~8 ч — первое показание GBMS было 0). Поэтому первые 3 минуты —
 // обычное среднее по всем показаниям, дальше экспонента; первую минуту
 // прогноза нет.
-static uint32_t s_iAvgSince = 0;
-float statsBattAvgA() { return s_iAvgInit && millis() - s_iAvgSince > 60000 ? s_iAvg : 0; }
+//
+// Смена режима — среднее заново. 04.11.2026 сеть пропала в 15:22, ток
+// −16,6 А, а среднее за 3 мин ещё помнило работу от сети (~−2 А): «хватит
+// на 79 ч» вместо ~9,5. Поэтому при пропаже и возврате сети, а также когда
+// ток 20 с подряд далеко от среднего (включили или выключили большую
+// нагрузку), среднее начинается снова; пока нового нет — мгновенный ток.
+static uint32_t s_iAvgSince = 0, s_iOffMs = 0;
+static float    s_iLast = 0;
+static bool     s_iBoot = true;                       // после старта — минута без прогноза
+float statsBattAvgA() {
+    if (!s_iAvgInit) return s_iBoot ? 0 : s_iLast;
+    if (s_iBoot && millis() - s_iAvgSince <= 60000) return 0;
+    return s_iAvg;
+}
+static void iAvgRestart() { s_iAvgInit = false; s_iBoot = false; s_iOffMs = 0; }
 
 uint32_t battEtaS(float soc, float capAh, float avgA, uint8_t low) {
     if (capAh <= 0 || fabsf(avgA) < 0.5f) return 0;
@@ -391,6 +404,7 @@ static void rollover() {
 
 static void outageStart(DayRec& D, HourRec& H) {
     s_inOut = true;
+    iAvgRestart();                       // прогноз — по току без сети, не по прежнему среднему
     s_outStartMs = s_lossSince;          // задним числом — с первого показания
     s_outSlot = -1;
     D.outages++;
@@ -407,6 +421,7 @@ static void outageStart(DayRec& D, HourRec& H) {
 
 static void outageEnd() {
     s_inOut = false;
+    iAvgRestart();
     tgOutage(false, (millis() - s_outStartMs) / 1000);
     if (!s_bound) return;                 // без времени записать нечего, счётчики в дне есть
     uint32_t now = (uint32_t)time(nullptr);
@@ -501,6 +516,13 @@ void statsLoop() {
         // нагрузкой, а прогноз «хватит на 3 ч» должен меняться спокойно.
         // Экспонента с постоянной ~3 минуты.
         if (b.fresh) {
+            s_iLast = b.current;
+            if (s_iAvgInit) {
+                float dev = fabsf(b.current - s_iAvg), lim = fabsf(s_iAvg) * 0.5f;
+                if (dev <= (lim > 5 ? lim : 5)) s_iOffMs = 0;
+                else if (!s_iOffMs) s_iOffMs = millis();
+                else if (millis() - s_iOffMs > 20000) iAvgRestart();
+            }
             if (!s_iAvgInit) s_iAvgSince = millis();
             float el = (millis() - s_iAvgSince) / 1000.0f + dt;
             float a = dt / (el < 180 ? el : 180.0f);
