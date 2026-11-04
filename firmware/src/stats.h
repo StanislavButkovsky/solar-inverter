@@ -23,7 +23,10 @@
 
 void   statsStart();
 void   statsLoop();                       // из loop(): сам решает, когда копить и писать
-String statsJson(const String& range);    // day | week | month | year
+// day | week | month | year | custom. at — дата (сутки от 1970, местные), на
+// которую смотреть: день, неделя по неё, её месяц, год по её месяц; 0 —
+// сегодня. custom — дни from..to. Всё зажимается в хранимый год.
+String statsJson(const String& range, uint32_t at = 0, uint32_t from = 0, uint32_t to = 0);
 String outagesJson(uint16_t n);           // последние отключения, новые сверху
 void   powerWrite(void (*emit)(const String&));   // мощности за сутки по 5 минут — по частям
 // То же для дисплея: 288 точек по 5 минут, последняя — сейчас; −1 / 255 — нет

@@ -286,6 +286,13 @@ body.light #pw_tip { color: #1d2433; }
 /* Статистика: столбики одним тоном, вкладки, подсказка по нажатию. */
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
+.st_nav { display: flex; gap: 6px; align-items: center; margin: 2px 0 6px; }
+.st_nav button { flex: 0 0 auto; padding: 7px 12px; font-size: 15px; }
+.st_nav #st_now { font-size: 13px; }
+.st_nav input { flex: 1 1 auto; min-width: 0; width: auto; padding: 7px 10px; font-size: 15px; color-scheme: dark; }
+body.light .st_nav input { color-scheme: light; }
+.st_nav .sub { flex: 0 0 auto; }
+#st_tip a { color: #6ea0ff; cursor: pointer; text-decoration: underline; }
 .sc_r { padding: 10px 0; border-bottom: 1px solid #232a36; }
 .sc_r .sc_top { display: flex; gap: 8px; align-items: center; }
 .sc_r .sc_top input[type=time] { flex: 1 1 auto; min-width: 0; }
@@ -591,8 +598,20 @@ body.light pre.rep { background: #f2f4f8; }
       <button onclick="stRange('day')"   id="sr_day">День</button><button
               onclick="stRange('week')"  id="sr_week">Неделя</button><button
               onclick="stRange('month')" id="sr_month">Месяц</button><button
-              onclick="stRange('year')"  id="sr_year">Год</button>
+              onclick="stRange('year')"  id="sr_year">Год</button><button
+              onclick="stRange('custom')" id="sr_custom">Период</button>
     </div>
+    <div class="st_nav">
+      <button onclick="stStep(-1)" id="st_prev" aria-label="Назад">‹</button>
+      <input type="date" id="st_at" onchange="stPickDate()">
+      <button onclick="stStep(1)" id="st_next" aria-label="Вперёд">›</button>
+      <button onclick="stToday()" id="st_now">Сегодня</button>
+    </div>
+    <div class="st_nav hidden" id="st_cust">
+      <span class="sub">с</span><input type="date" id="st_from" onchange="stPickRange()">
+      <span class="sub">по</span><input type="date" id="st_to" onchange="stPickRange()">
+    </div>
+    <div class="sub" id="st_per" style="margin:2px 0 8px"></div>
     <table class="kv">
       <tr><td>Из сети</td><td id="st_g">—</td></tr>
       <tr><td>Нагрузка</td><td id="st_l">—</td></tr>
@@ -2700,6 +2719,20 @@ function pwDraw() {
 
 /* ----------------------------------------- статистика */
 var stR = "day", stM = "all", stData = null, stSel = -1;
+// Дата, на которую смотрим (сутки от 1970, местные; 0 — сегодня), и период.
+var stAt = 0, stFrom = 0, stTo = 0;
+var MONF = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+function dayStr(d) { return new Date(d * 86400000).toISOString().slice(0, 10); }
+function strDay(v) { var t = Date.parse(v); return isNaN(t) ? 0 : Math.round(t / 86400000); }
+function dmy(d, year) {
+  var x = new Date(d * 86400000);
+  return two(x.getUTCDate()) + "." + two(x.getUTCMonth() + 1) + (year ? "." + x.getUTCFullYear() : "");
+}
+function monY(d, full) {
+  var x = new Date(d * 86400000);
+  return (full ? MONF : MON)[x.getUTCMonth()] + " " + x.getUTCFullYear();
+}
+function stUnit() { return stData && stData.unit ? stData.unit : ({ day: "h", year: "m" }[stR] || "d"); }
 var MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
 function kwh(wh) {
@@ -2725,15 +2758,63 @@ function two(n) { return (n < 10 ? "0" : "") + n; }
 // Сутки и месяцы приходят числами от 1970 года по местному времени модуля;
 // UTC-разбор такого числа и даёт местную дату.
 function barLabel(t, short) {
-  if (stR === "day") return short ? String(t) : (two(t) + ":00");
-  if (stR === "year") return MON[t % 12] + (short ? "" : " " + Math.floor(t / 12));
+  var u = stUnit();
+  if (u === "h") return short ? String(t) : (two(t) + ":00");
+  if (u === "m") return MON[t % 12] + (short ? "" : " " + Math.floor(t / 12));
   var d = new Date(t * 86400000);
   return short ? String(d.getUTCDate()) : (two(d.getUTCDate()) + "." + two(d.getUTCMonth() + 1));
 }
 function metricVal(b) { return stM === "o" ? b.o : b[stM]; }
 function metricText(v) { return stM === "o" ? dur(v) : ("≈ " + kwh(v) + " кВт·ч"); }
 
-function stRange(r) { stR = r; stSel = -1; stLoad(); }
+function stRange(r) {
+  if (r === "custom" && !stFrom && stData && stData.from) { stFrom = stData.from; stTo = stData.to; }
+  stR = r; stSel = -1; stLoad();
+}
+// ‹ › — на один период: день, неделю, месяц, год; у своего периода — на его длину.
+function stStep(dir) {
+  var s = stData;
+  if (!s || !s.valid) return;
+  if (stR === "custom") {
+    var len = s.to - s.from + 1;
+    stFrom = s.from + dir * len; stTo = s.to + dir * len;
+    if (stTo > s.today) { stTo = s.today; stFrom = Math.max(s.min, stTo - len + 1); }
+    if (stFrom < s.min) { stFrom = s.min; stTo = Math.min(s.today, stFrom + len - 1); }
+  } else if (stR === "day") stAt = s.at + dir;
+  else if (stR === "week") stAt = s.at + dir * 7;
+  else if (dir < 0) stAt = s.from - 1;               // месяц, год: день перед началом
+  else stAt = stR === "month" ? s.to + 1 : s.to + 365;
+  if (stAt >= s.today) stAt = 0;
+  stSel = -1; stLoad();
+}
+function stToday() { stAt = 0; if (stR === "custom") stR = "day"; stSel = -1; stLoad(); }
+function stPickDate() { var d = strDay($("st_at").value); if (d) { stAt = d; stSel = -1; stLoad(); } }
+function stPickRange() {
+  var f = strDay($("st_from").value), t = strDay($("st_to").value);
+  if (!f || !t) return;
+  stFrom = f; stTo = t; stSel = -1; stLoad();
+}
+// Из столбика — внутрь: день недели или месяца → по часам, месяц года → по дням.
+function stOpen(t) {
+  if (stUnit() === "d") { stR = "day"; stAt = t; }
+  else { stR = "month"; stAt = Date.UTC(Math.floor(t / 12), t % 12, 1) / 86400000; }
+  if (stData && stAt >= stData.today) stAt = 0;
+  stSel = -1; stLoad();
+}
+function stOpenLink(b) {
+  var u = stUnit();
+  if (u === "h" || !b.d && !b.l) return "";
+  return ' · <a onclick="stOpen(' + b.t + ')">' + (u === "d" ? "по часам" : "по дням") + "</a>";
+}
+function stPeriodText(s) {
+  if (!s.valid || !s.from) return "";
+  if (stR === "day") return (s.at === s.today ? "сегодня, " : "") + dmy(s.at, true);
+  if (stR === "month") return monY(s.from, true);
+  if (stR === "year") return monY(s.from) + " — " + monY(s.to);
+  var x = new Date(s.from * 86400000), y = new Date(s.to * 86400000);
+  return dmy(s.from, x.getUTCFullYear() !== y.getUTCFullYear()) + " — " + dmy(s.to, true) +
+         " · " + (s.to - s.from + 1) + " дн.";
+}
 function stMetric(m) { stM = m; stSel = -1; stDraw(); }
 
 function bwLoad() {
@@ -2764,15 +2845,41 @@ function bwLoad() {
 
 function stLoad() {
   bwLoad();
-  var ids = ["day", "week", "month", "year"];
+  var ids = ["day", "week", "month", "year", "custom"];
   for (var i = 0; i < ids.length; i++) $("sr_" + ids[i]).className = ids[i] === stR ? "on" : "";
-  get("/api/stats?range=" + stR, function (s) { stData = s; stShow(); });
+  var q = "/api/stats?range=" + stR;
+  if (stR === "custom") q += "&from=" + (stFrom || stAt) + "&to=" + (stTo || stAt);
+  else if (stAt) q += "&at=" + stAt;
+  var want = q;
+  get(q, function (s) { if (want !== stQ) return; stData = s; stShow(); });
+  stQ = q;
   get("/api/outages?n=20", stOutages);
 }
 
+var stQ = "";
 function stShow() {
   var s = stData;
   show("st_notime", !s.valid);
+  // Даты: выбор ограничен хранимым годом (по часам — неделя, см. nohours).
+  var cu = stR === "custom";
+  show("st_cust", cu);
+  $("st_at").style.display = cu ? "none" : "";
+  $("st_now").style.display = cu ? "none" : "";
+  if (s.valid) {
+    var lo = dayStr(s.min), hi = dayStr(s.today);
+    var els = ["st_at", "st_from", "st_to"];
+    for (var e = 0; e < els.length; e++) { $(els[e]).min = lo; $(els[e]).max = hi; }
+    if (document.activeElement !== $("st_at")) $("st_at").value = dayStr(s.at);
+    if (cu) {
+      if (document.activeElement !== $("st_from")) $("st_from").value = dayStr(s.from);
+      if (document.activeElement !== $("st_to")) $("st_to").value = dayStr(s.to);
+    }
+    $("st_prev").disabled = s.from <= s.min;
+    $("st_next").disabled = s.to >= s.today;
+    $("st_now").disabled = !cu && s.at === s.today;
+  }
+  $("st_per").innerHTML = stPeriodText(s) +
+    (s.nohours ? '<br>по часам модуль хранит только последние 7 дней — ниже итоги за день' : "");
   var t = s.tot;
   $("st_g").innerHTML = "≈ " + kwh(t.g) + " кВт·ч";
   $("st_l").innerHTML = "≈ " + kwh(t.l) + " кВт·ч";
@@ -2809,10 +2916,10 @@ function stBar(cls, x, w, base, bh) {
 // пишет с 24.10.2026; у прежних периодов — только столбик нагрузки.
 var MIX_PARTS = [["lp", "солнце", "c-pv"], ["lb", "батарея", "c-batt"], ["lg", "сеть", "c-grid"]];
 function stDrawGroup() {
-  var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
+  var per = { h: "по часам", d: "по дням", m: "по месяцам" }[stUnit()];
   $("st_title").innerHTML = "Нагрузка и из чего она сложилась, " + per;
   var svg = $("st_svg"), s = stData;
-  if (!s || !s.bars) { svg.innerHTML = ""; $("st_table").innerHTML = ""; return; }
+  if (!s || !s.bars || !s.bars.length) { svg.innerHTML = ""; $("st_table").innerHTML = ""; $("st_tip").innerHTML = ""; return; }
   var bars = s.bars, n = bars.length, max = 0;
   for (var k = 0; k < n; k++) max = Math.max(max, bars[k].l || 0, (bars[k].lp || 0) + (bars[k].lb || 0) + (bars[k].lg || 0));
   var W = 400, H = 170, top = 12, bottom = 18, plot = H - top - bottom, base = top + plot;
@@ -2859,7 +2966,7 @@ function stDrawGroup() {
       if (b.p > (b.lp || 0) + 50) t += "<br>солнце выработало всего " + kwh(b.p) + " — остальное ушло в батарею";
     } else if (b.l > 0) t += " · состав не записывался (пишется с 24.10)";
     if (!b.d) t += " · данных не было";
-    return t;
+    return t + stOpenLink(b);
   };
   $("st_tip").innerHTML = stSel >= 0 ? tip(bars[stSel]) : (max ? "нажмите на пару столбиков" : "за этот период пока пусто");
   var rows = "<tr><td></td><td>нагрузка</td><td>солнце</td><td>батарея</td><td>сеть</td></tr>";
@@ -2878,11 +2985,11 @@ function stDraw() {
   show("st_leg", stM === "all");
   if (stM === "all") { stDrawGroup(); return; }
   var names = { g: "Из сети", l: "Нагрузка", b: "Нагрузка от батареи", p: "Солнечные панели", o: "Без сети" };
-  var per = { day: "по часам", week: "по дням", month: "по дням", year: "по месяцам" }[stR];
+  var per = { h: "по часам", d: "по дням", m: "по месяцам" }[stUnit()];
   $("st_title").innerHTML = names[stM] + ", " + per;
   var svg = $("st_svg");
   var s = stData;
-  if (!s || !s.bars) { svg.innerHTML = ""; $("st_table").innerHTML = ""; return; }
+  if (!s || !s.bars || !s.bars.length) { svg.innerHTML = ""; $("st_table").innerHTML = ""; $("st_tip").innerHTML = ""; return; }
   var bars = s.bars, n = bars.length, max = 0;
   for (var k = 0; k < n; k++) if (metricVal(bars[k]) > max) max = metricVal(bars[k]);
   var W = 400, H = 170, top = 8, bottom = 18, plot = H - top - bottom;
@@ -2920,7 +3027,7 @@ function stDraw() {
 function stTip(b) {
   var cover = b.d ? " · данные " + dur(b.d) : " · данных не было";
   return "<b>" + barLabel(b.t, false) + "</b> — " + metricText(metricVal(b)) +
-         (b.n ? " · отключений " + b.n : "") + cover;
+         (b.n ? " · отключений " + b.n : "") + cover + stOpenLink(b);
 }
 function stPick(j) { stSel = j; stDraw(); }
 

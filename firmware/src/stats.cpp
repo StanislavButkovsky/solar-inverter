@@ -633,7 +633,57 @@ static void totals(String& j, const DayRec& t, const SelfRec* sf = nullptr) {
     j += "}";
 }
 
-String statsJson(const String& range) {
+// Месяц числом год*12+месяц — для подписи столбика «по месяцам».
+static int32_t monthOf(uint32_t d) {
+    time_t t = (time_t)d * 86400;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    return (tmv.tm_year + 1900) * 12 + tmv.tm_mon;
+}
+
+// Дни from..to (включительно, уже в пределах хранимого года): по дню на
+// столбик, а если дней больше 62 — по месяцу. Пишет ,"unit":…,"bars":[…],
+// суммы — в tot/mtot/stot. Три файла открываются один раз: год — это
+// 366 дней, и открытие на каждую запись заметно тормозило бы ответ.
+static void daysRange(String& j, uint32_t from, uint32_t to, DayRec& tot, MixRec& mtot, SelfRec& stot) {
+    bool byMonth = to - from + 1 > 62;
+    j += ",\"unit\":\""; j += byMonth ? "m" : "d"; j += "\",\"bars\":[";
+    File fd = LittleFS.open(F_DAYS, "r"), fm = LittleFS.open(F_MIXD, "r"), fs = LittleFS.open(F_SELF, "r");
+    DayRec acc;  memset(&acc, 0, sizeof(acc));
+    MixRec macc; memset(&macc, 0, sizeof(macc));
+    int32_t cur = monthOf(from);
+    bool first = true;
+    for (uint32_t d = from; d <= to; d++) {
+        DayRec r;   memset(&r, 0, sizeof(r));
+        MixRec m;   memset(&m, 0, sizeof(m));
+        SelfRec sr; memset(&sr, 0, sizeof(sr));
+        if (d == s_day.day) r = s_day;
+        else if (fd) { fd.seek((d % NDAYS) * sizeof(DayRec)); fd.read((uint8_t*)&r, sizeof(r)); if (r.day != d) memset(&r, 0, sizeof(r)); }
+        if (d == s_mixD.t) m = s_mixD;
+        else if (fm) { fm.seek((d % NDAYS) * sizeof(MixRec)); fm.read((uint8_t*)&m, sizeof(m)); if (m.t != d) memset(&m, 0, sizeof(m)); }
+        if (d == s_selfD.t) sr = s_selfD;
+        else if (fs) { fs.seek((d % NDAYS) * sizeof(SelfRec)); fs.read((uint8_t*)&sr, sizeof(sr)); if (sr.t != d) memset(&sr, 0, sizeof(sr)); }
+        stot.wh += sr.wh; stot.s += sr.s;
+        mergeDay(tot, r);
+        mtot.pv += m.pv; mtot.batt += m.batt; mtot.grid += m.grid;
+        if (!byMonth) { bar(j, d, r, first, &m); first = false; continue; }
+        int32_t mo = monthOf(d);
+        if (mo != cur) {
+            bar(j, (uint32_t)cur, acc, first, &macc); first = false;
+            memset(&acc, 0, sizeof(acc)); memset(&macc, 0, sizeof(macc));
+            cur = mo;
+        }
+        mergeDay(acc, r);
+        macc.pv += m.pv; macc.batt += m.batt; macc.grid += m.grid;
+    }
+    if (byMonth) bar(j, (uint32_t)cur, acc, first, &macc);
+    j += "]";
+    if (fd) fd.close();
+    if (fm) fm.close();
+    if (fs) fs.close();
+}
+
+String statsJson(const String& range, uint32_t at, uint32_t from, uint32_t to) {
     String j;
     j.reserve(3000);
     if (!s_bound) {
@@ -642,17 +692,24 @@ String statsJson(const String& range) {
         return j + "}";
     }
     uint32_t d0 = s_day.day;
+    uint32_t dMin = d0 - (NDAYS - 1);                 // старше — ячейки уже перезаписаны
+    if (!at || at > d0) at = d0;
+    if (at < dMin) at = dMin;
     DayRec tot;
     memset(&tot, 0, sizeof(tot));
     MixRec mtot;
     memset(&mtot, 0, sizeof(mtot));
     SelfRec stot;
     memset(&stot, 0, sizeof(stot));
-    j = "{\"valid\":true,\"range\":\"" + range + "\",\"today\":" + String(d0) + ",\"bars\":[";
+    j = "{\"valid\":true,\"range\":\"" + range + "\",\"today\":" + String(d0) +
+        ",\"min\":" + String(dMin) + ",\"at\":" + String(at);
 
     if (range == "day") {
-        for (uint32_t i = 0; i < 24; i++) {
-            uint32_t h = d0 * 24 + i;
+        // По часам хранится неделя; день старше — только итоги.
+        bool hourly = d0 - at < NHOURS / 24;
+        j += ",\"from\":" + String(at) + ",\"to\":" + String(at) + ",\"unit\":\"h\",\"bars\":[";
+        if (hourly) for (uint32_t i = 0; i < 24; i++) {
+            uint32_t h = at * 24 + i;
             HourRec r;
             if (h == s_hour.hour) r = s_hour;
             else { readHour(h, r); if (r.hour != h) memset(&r, 0, sizeof(r)); }
@@ -660,68 +717,42 @@ String statsJson(const String& range) {
             if (h == s_mixH.t) m = s_mixH; else readMix(F_MIXH, NHOURS, h, m);
             bar(j, i, fromHour(r), i == 0, &m);
         }
-        tot = s_day;
-        mtot = s_mixD;
-        stot = s_selfD;
-    } else if (range == "week" || range == "month") {
-        uint32_t from = d0 - 6;
-        if (range == "month") {
-            time_t t = (time_t)d0 * 86400;
+        j += "]";
+        dayAt(at, tot);
+        mixDayAt(at, mtot);
+        readSelf(at, stot);
+        if (!hourly) j += ",\"nohours\":true";
+    } else if (range == "year") {                     // 12 месяцев, месяц даты — последним
+        int32_t mEnd = monthOf(at);
+        uint32_t f = at;
+        while (f > dMin && monthOf(f - 1) > mEnd - 12) f--;
+        uint32_t t = at;
+        while (t < d0 && monthOf(t + 1) == mEnd) t++;
+        j += ",\"from\":" + String(f) + ",\"to\":" + String(t);
+        daysRange(j, f, t, tot, mtot, stot);             // дней > 62 — всегда по месяцам
+    } else {
+        uint32_t f, t;
+        if (range == "custom") {
+            f = from ? from : at; t = to ? to : at;
+            if (f > t) { uint32_t x = f; f = t; t = x; }
+            if (t > d0) t = d0;
+            if (f < dMin) f = dMin;
+            if (t < f) t = f;
+        } else if (range == "month") {
+            time_t tt = (time_t)at * 86400;
             struct tm tmv;
-            gmtime_r(&t, &tmv);
-            from = d0 - (tmv.tm_mday - 1);
+            gmtime_r(&tt, &tmv);
+            f = at - (tmv.tm_mday - 1);
+            t = f;
+            while (t < d0 && monthOf(t + 1) == monthOf(f)) t++;
+            if (f < dMin) f = dMin;
+        } else {                                       // week: 7 дней, дата — последней
+            t = at;
+            f = t - 6 < dMin ? dMin : t - 6;
         }
-        for (uint32_t d = from; d <= d0; d++) {
-            DayRec r;
-            dayAt(d, r);
-            MixRec m;
-            mixDayAt(d, m);
-            bar(j, d, r, d == from, &m);
-            mergeDay(tot, r);
-            mtot.pv += m.pv; mtot.batt += m.batt; mtot.grid += m.grid;
-            SelfRec sr;
-            readSelf(d, sr);
-            stot.wh += sr.wh; stot.s += sr.s;
-        }
-    } else {                                           // year: 12 месяцев, текущий последним
-        time_t t = (time_t)d0 * 86400;
-        struct tm tmv;
-        gmtime_r(&t, &tmv);
-        int32_t mNow = (tmv.tm_year + 1900) * 12 + tmv.tm_mon;
-        DayRec months[12];
-        memset(months, 0, sizeof(months));
-        MixRec mm[12];
-        memset(mm, 0, sizeof(mm));
-        // Все 366 ячеек одним проходом по файлу; сегодняшний день — из памяти,
-        // он новее записанного.
-        File f = LittleFS.open(F_DAYS, "r");
-        for (uint32_t slot = 0; slot < NDAYS; slot++) {
-            DayRec r;
-            memset(&r, 0, sizeof(r));
-            if (f) f.read((uint8_t*)&r, sizeof(r));
-            if (slot == d0 % NDAYS) r = s_day;
-            if (!r.day || r.day > d0 || d0 - r.day >= NDAYS) continue;
-            time_t td = (time_t)r.day * 86400;
-            gmtime_r(&td, &tmv);
-            int32_t back = mNow - ((tmv.tm_year + 1900) * 12 + tmv.tm_mon);
-            if (back < 0 || back > 11) continue;
-            mergeDay(months[11 - back], r);
-            MixRec m;
-            mixDayAt(r.day, m);
-            MixRec& M = mm[11 - back];
-            M.pv += m.pv; M.batt += m.batt; M.grid += m.grid;
-            SelfRec sr;
-            readSelf(r.day, sr);
-            stot.wh += sr.wh; stot.s += sr.s;
-        }
-        if (f) f.close();
-        for (int i = 0; i < 12; i++) {
-            bar(j, (uint32_t)(mNow - 11 + i), months[i], i == 0, &mm[i]);
-            mergeDay(tot, months[i]);
-            mtot.pv += mm[i].pv; mtot.batt += mm[i].batt; mtot.grid += mm[i].grid;
-        }
+        j += ",\"from\":" + String(f) + ",\"to\":" + String(t);
+        daysRange(j, f, t, tot, mtot, stot);
     }
-    j += "]";
     totals(j, tot, &stot);
     j += ",\"mix\":{\"x\":0";
     putMix(j, mtot);

@@ -634,12 +634,14 @@ void webStart() {
         server.sendContent("");
     });
 
-    // Статистика: day | week | month | year. Месяцы собираются из дней на лету.
+    // Статистика: day | week | month | year | custom; at, from, to — сутки
+    // от 1970 (местные). Месяцы собираются из дней на лету.
     server.on("/api/stats", HTTP_GET, []() {
         String r = server.hasArg("range") ? server.arg("range") : String("day");
-        if (r != "day" && r != "week" && r != "month" && r != "year") r = "day";
+        if (r != "day" && r != "week" && r != "month" && r != "year" && r != "custom") r = "day";
+        uint32_t at = server.arg("at").toInt(), from = server.arg("from").toInt(), to = server.arg("to").toInt();
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "application/json; charset=utf-8", statsJson(r));
+        server.send(200, "application/json; charset=utf-8", statsJson(r, at, from, to));
     });
 
     // Поток по частям: ответ на ~7 КБ не собирается в памяти целиком.
