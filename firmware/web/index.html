@@ -295,7 +295,31 @@ body.light #pw_tip { color: #1d2433; }
 .st_nav input { flex: 1 1 auto; min-width: 0; width: auto; padding: 7px 10px; font-size: 15px; color-scheme: dark; }
 body.light .st_nav input { color-scheme: light; }
 .st_nav .sub { flex: 0 0 auto; }
+.card.st_csv { margin-top: 10px; }
 #st_tip a { color: #6ea0ff; cursor: pointer; text-decoration: underline; }
+#st_per { margin: 2px 0 2px; }
+/* Компьютер: управление одной строкой, итоги рядом с графиком, мелкие
+   карточки — в три колонки; длинные списки — со своей прокруткой. */
+@media (min-width: 900px) {
+  .st_bar .card { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 10px 16px; }
+  .st_bar .tabs button { margin-bottom: 0; }
+  .st_bar .st_nav { margin: 0; }
+  .st_bar .st_nav input { flex: 0 0 170px; width: 170px; }
+  #st_per { flex: 1 1 200px; text-align: right; margin: 0; font-size: 13px; }
+  .row.st_main { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); }
+  .row.st_three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .row.st_main > .col, .row.st_three > .col { width: auto; }
+  .row.st_main > .col > .card, .row.st_three > .col > .card { height: 100%; }
+  #st_svg { height: 230px; }
+  .st_tw { max-height: 200px; overflow-y: auto; }
+  #st_out { overflow-y: auto; padding-right: 4px; }
+  .row.st_three > .col:first-child > .card { height: auto; }
+  /* Отключения не растягивают ряд: высоту задают соседи, список — с прокруткой. */
+  .row.st_three > .col:nth-child(2) { position: relative; }
+  .row.st_three > .col:nth-child(2) > .card { position: absolute; top: 5px; right: 5px; bottom: 5px; left: 5px;
+    height: auto; display: flex; flex-direction: column; }
+  #st_out { flex: 1 1 auto; min-height: 0; max-height: none; }
+}
 .sc_r { padding: 10px 0; border-bottom: 1px solid #232a36; }
 .sc_r .sc_top { display: flex; gap: 8px; align-items: center; }
 .sc_r .sc_top input[type=time] { flex: 1 1 auto; min-width: 0; }
@@ -334,7 +358,8 @@ svg.bars .hit { fill: transparent; }
 /* «Вместе»: три столбика в группе, цвета — как у графика мощностей за сутки. */
 svg.bars .gb { stroke: none; }
 svg.bars .gb.dim { opacity: .35; }
-svg.bars .gv { fill: #8a93a5; font-size: 12px; }
+svg.bars .gv { fill: #8a93a5; font-size: 12px; paint-order: stroke; stroke: #191d26; stroke-width: 3px; stroke-linejoin: round; }
+body.light svg.bars .gv { stroke: #ffffff; }
 svg.bars .ax { fill: #8a93a5; font-size: 10px; }
 svg.bars .gl { stroke: #262c38; stroke-width: 1; }
 #st_tip { min-height: 18px; margin: 6px 0 2px; font-size: 13px; color: #eef1f6; }
@@ -596,7 +621,7 @@ body.light pre.rep { background: #f2f4f8; }
     накопленное хранится в памяти и уйдёт в сегодняшний день.
   </div></div></div>
 
-  <div class="row"><div class="col c1"><div class="card">
+  <div class="row st_bar"><div class="col c1"><div class="card">
     <div class="tabs" id="st_range">
       <button onclick="stRange('day')"   id="sr_day">День</button><button
               onclick="stRange('week')"  id="sr_week">Неделя</button><button
@@ -617,7 +642,11 @@ body.light pre.rep { background: #f2f4f8; }
       <input type="date" id="st_to" onchange="stPickRange()">
       <button onclick="stStep(1)" class="st_next" aria-label="Вперёд">›</button>
     </div>
-    <div class="sub" id="st_per" style="margin:2px 0 8px"></div>
+    <div class="sub" id="st_per"></div>
+  </div></div></div>
+
+  <div class="row st_main"><div class="col c1"><div class="card">
+    <h2>Итого за период</h2>
     <table class="kv">
       <tr><td>Из сети</td><td id="st_g">—</td></tr>
       <tr><td>Нагрузка</td><td id="st_l">—</td></tr>
@@ -633,9 +662,7 @@ body.light pre.rep { background: #f2f4f8; }
       ≈ — оценка: инвертор по USB сообщает загрузку в процентах, мощность
       считается через номинал и выходит полной (ВА), а не активной.
     </div>
-  </div></div></div>
-
-  <div class="row"><div class="col c1"><div class="card">
+  </div></div><div class="col c1"><div class="card">
     <h2 id="st_title">График</h2>
     <div class="tabs" id="st_metric">
       <button onclick="stMetric('all')" id="sm_all">Вместе</button><button
@@ -650,10 +677,10 @@ body.light pre.rep { background: #f2f4f8; }
     </div>
     <div id="st_tip" class="sub">нажмите на столбик</div>
     <svg class="bars" id="st_svg" viewBox="0 0 400 170" preserveAspectRatio="none"></svg>
-    <table class="st" id="st_table"></table>
+    <div class="st_tw"><table class="st" id="st_table"></table></div>
   </div></div></div>
 
-  <div class="row"><div class="col c1"><div class="card">
+  <div class="row st_three"><div class="col c1"><div class="card">
     <h2>Крайние значения</h2>
     <table class="kv">
       <tr><td>Сеть, мин. … макс.</td><td id="st_gv">—</td></tr>
@@ -662,14 +689,21 @@ body.light pre.rep { background: #f2f4f8; }
       <tr><td>Загрузка, макс.</td><td id="st_lm">—</td></tr>
       <tr><td>Заряд батареи, мин.</td><td id="st_smin">—</td></tr>
     </table>
-  </div></div></div>
-
-  <div class="row"><div class="col c1"><div class="card">
+  </div>
+  <div class="card st_csv">
+    <div class="st_csvt"><h2>Таблица для Excel</h2>
+    <div class="sub" style="margin-bottom:10px">
+      Вся история по дням, до года: солнце, прогноз, сеть, нагрузка, отключения,
+      крайние значения и экономия. Открывается в Excel и LibreOffice как есть.
+      Раз в месяц тот же файл модуль сам присылает в Telegram — на случай, если
+      плата сломается.
+    </div></div>
+    <a class="btn wide" href="/api/stats.csv" download>Скачать CSV</a>
+  </div>
+  </div><div class="col c1"><div class="card">
     <h2>Отключения сети</h2>
     <div id="st_out"><div class="sub">пока не было</div></div>
-  </div></div></div>
-
-  <div class="row"><div class="col c1"><div class="card">
+  </div></div><div class="col c1"><div class="card">
     <h2>Износ батареи</h2>
     <table class="kv">
       <tr><td>Ёмкость по BMS</td><td id="bw_cap">—</td></tr>
@@ -689,16 +723,6 @@ body.light pre.rep { background: #f2f4f8; }
     </div>
   </div></div></div>
 
-  <div class="row"><div class="col c1"><div class="card">
-    <h2>Таблица для Excel</h2>
-    <div class="sub" style="margin-bottom:10px">
-      Вся история по дням, до года: солнце, прогноз, сеть, нагрузка, отключения,
-      крайние значения и экономия. Открывается в Excel и LibreOffice как есть.
-      Раз в месяц тот же файл модуль сам присылает в Telegram — на случай, если
-      плата сломается.
-    </div>
-    <a class="btn wide" href="/api/stats.csv" download>Скачать CSV</a>
-  </div></div></div>
 </div>
 
 <!-- ============================ НАСТРОЙКИ ============================ -->
@@ -2928,20 +2952,22 @@ function stDrawGroup() {
   if (!s || !s.bars || !s.bars.length) { svg.innerHTML = ""; $("st_table").innerHTML = ""; $("st_tip").innerHTML = ""; return; }
   var bars = s.bars, n = bars.length, max = 0;
   for (var k = 0; k < n; k++) max = Math.max(max, bars[k].l || 0, (bars[k].lp || 0) + (bars[k].lb || 0) + (bars[k].lg || 0));
-  var W = 400, H = 170, top = 12, bottom = 18, plot = H - top - bottom, base = top + plot;
-  var slot = W / n, gap = Math.max(1, Math.min(5, slot * 0.22)), inner = slot - gap;
+  var W = svg.clientWidth || 400, H = svg.clientHeight || 170, top = 12, bottom = 18, plot = H - top - bottom, base = top + plot;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  var slot = W / n, gap = Math.max(1, Math.min(5, slot * 0.22)), inner = Math.min(slot - gap, 90);
   var ig = Math.min(1.5, inner * 0.08), bw = Math.max(1, (inner - ig) / 2);
   var sc = function (v) { return max ? plot * v / max : 0; };
   var h = "";
+  var lbl = "";
   for (var q = 1; q <= 2; q++) {
     var gy = base - plot * q / 2;
-    h += '<line class="gl" x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '"/>' +
-         '<text class="gv" x="2" y="' + (gy - 2) + '">' + kwh(max * q / 2) + ' кВт·ч</text>';
+    h += '<line class="gl" x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '"/>';
+    lbl += '<text class="gv" x="2" y="' + (gy - 3) + '">' + kwh(max * q / 2) + ' кВт·ч</text>';
   }
   h += '<line class="gl" x1="0" x2="' + W + '" y1="' + base + '" y2="' + base + '"/>';
   var step = n > 12 ? Math.ceil(n / 8) : 1;
   for (var j = 0; j < n; j++) {
-    var B = bars[j], x0 = j * slot + gap / 2, dim = stSel >= 0 && stSel !== j ? " dim" : "";
+    var B = bars[j], x0 = j * slot + (slot - inner) / 2, dim = stSel >= 0 && stSel !== j ? " dim" : "";
     var lh = sc(B.l || 0);
     if (lh > 0) h += stBar("gb c-load" + dim, x0, bw, base, Math.max(lh, 1.5));
     // Состав — стопкой; между частями — зазор цвета фона.
@@ -2961,7 +2987,7 @@ function stDrawGroup() {
       h += '<text class="ax" x="' + (x0 + inner / 2) + '" y="' + (H - 4) + '" text-anchor="middle">' + barLabel(B.t, true) + '</text>';
     h += '<rect class="hit" x="' + (j * slot) + '" y="0" width="' + slot + '" height="' + H + '" onclick="stPick(' + j + ')"/>';
   }
-  svg.innerHTML = h;
+  svg.innerHTML = h + lbl;
   var pct = function (x, of) { return of > 0 ? Math.round(x / of * 100) : 0; };
   var tip = function (b) {
     var sum = (b.lp || 0) + (b.lb || 0) + (b.lg || 0), t = "<b>" + barLabel(b.t, false) + "</b> — нагрузка " + kwh(b.l) + " кВт·ч";
@@ -2998,13 +3024,14 @@ function stDraw() {
   if (!s || !s.bars || !s.bars.length) { svg.innerHTML = ""; $("st_table").innerHTML = ""; $("st_tip").innerHTML = ""; return; }
   var bars = s.bars, n = bars.length, max = 0;
   for (var k = 0; k < n; k++) if (metricVal(bars[k]) > max) max = metricVal(bars[k]);
-  var W = 400, H = 170, top = 8, bottom = 18, plot = H - top - bottom;
-  var slot = W / n, gap = Math.min(2, slot * 0.2), bw = slot - gap;
+  var W = svg.clientWidth || 400, H = svg.clientHeight || 170, top = 8, bottom = 18, plot = H - top - bottom;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  var slot = W / n, gap = Math.min(2, slot * 0.2), bw = Math.min(slot - gap, 56);
   var h = '<line class="gl" x1="0" x2="' + W + '" y1="' + (top + plot) + '" y2="' + (top + plot) + '"/>';
   for (var j = 0; j < n; j++) {
     var v = metricVal(bars[j]);
     var bh = max ? Math.max(v ? 2 : 0, plot * v / max) : 0;
-    var x = j * slot + gap / 2, y = top + plot - bh;
+    var x = j * slot + (slot - bw) / 2, y = top + plot - bh;
     var r = Math.min(4, bw / 2, bh);
     // Скруглены только верхние углы: низ стоит на оси.
     if (bh > 0)
@@ -3090,6 +3117,9 @@ setInterval(events, 5000);
 setInterval(usbPoll, 3000);
 // На экране статистики — свежие цифры раз в полминуты, остальное время не дёргаем.
 setInterval(function () { if (onStats && !busyRadio) stLoad(); }, 30000);
+// График рисуется в настоящих пикселях — при смене ширины окна перерисовать.
+var stRsz = 0;
+window.addEventListener("resize", function () { clearTimeout(stRsz); stRsz = setTimeout(function () { if (onStats && stData) stDraw(); }, 150); });
 </script>
 </body>
 </html>

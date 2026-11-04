@@ -230,7 +230,14 @@ static void writeAt(const char* path, size_t off, const void* buf, size_t n) {
     f.close();
 }
 
-static void readDay(uint32_t d, DayRec& r)    { readAt(F_DAYS, (d % NDAYS) * sizeof(DayRec), &r, sizeof(r)); }
+// Напряжение батареи вне 10–100 В — не измерение: 01.11.2026 при первом
+// подключении RS485 в день записалось 3276,7 В (32767 — «нет данных»).
+static bool battVok(float v) { return v > 10 && v < 100; }
+static void fixDay(DayRec& r) {
+    if (!battVok(r.battVmax)) r.battVmax = battVok(r.battVmin) ? r.battVmin : 0;
+    if (!battVok(r.battVmin)) r.battVmin = r.battVmax;
+}
+static void readDay(uint32_t d, DayRec& r)    { readAt(F_DAYS, (d % NDAYS) * sizeof(DayRec), &r, sizeof(r)); fixDay(r); }
 static void writeDay(const DayRec& r)         { writeAt(F_DAYS, (r.day % NDAYS) * sizeof(DayRec), &r, sizeof(r)); }
 static void readHour(uint32_t h, HourRec& r)  { readAt(F_HOURS, (h % NHOURS) * sizeof(HourRec), &r, sizeof(r)); }
 static void writeHour(const HourRec& r)       { writeAt(F_HOURS, (r.hour % NHOURS) * sizeof(HourRec), &r, sizeof(r)); }
@@ -501,7 +508,7 @@ void statsLoop() {
             s_iAvgInit = true;
         }
         if (v.gridOn) minmax(D.gridVmin, D.gridVmax, v.gridV);
-        if (b.fresh)  minmax(D.battVmin, D.battVmax, b.voltage);
+        if (b.fresh && battVok(b.voltage)) minmax(D.battVmin, D.battVmax, b.voltage);
         if (v.tempC > D.tempMax)   D.tempMax = v.tempC;
         if (v.loadPct > D.loadMax) D.loadMax = v.loadPct;
 
@@ -658,7 +665,7 @@ static void daysRange(String& j, uint32_t from, uint32_t to, DayRec& tot, MixRec
         MixRec m;   memset(&m, 0, sizeof(m));
         SelfRec sr; memset(&sr, 0, sizeof(sr));
         if (d == s_day.day) r = s_day;
-        else if (fd) { fd.seek((d % NDAYS) * sizeof(DayRec)); fd.read((uint8_t*)&r, sizeof(r)); if (r.day != d) memset(&r, 0, sizeof(r)); }
+        else if (fd) { fd.seek((d % NDAYS) * sizeof(DayRec)); fd.read((uint8_t*)&r, sizeof(r)); if (r.day != d) memset(&r, 0, sizeof(r)); else fixDay(r); }
         if (d == s_mixD.t) m = s_mixD;
         else if (fm) { fm.seek((d % NDAYS) * sizeof(MixRec)); fm.read((uint8_t*)&m, sizeof(m)); if (m.t != d) memset(&m, 0, sizeof(m)); }
         if (d == s_selfD.t) sr = s_selfD;
@@ -817,6 +824,7 @@ void statsCsv(void (*emit)(const String&, void*), void* ctx) {
         else if (all) r = all[d % NDAYS];
         else readDay(d, r);
         if (r.day != d || (!r.dataS && !r.pvWh && !r.loadWh)) continue;
+        fixDay(r);
         time_t t = (time_t)d * 86400;
         struct tm tmv;
         gmtime_r(&t, &tmv);
