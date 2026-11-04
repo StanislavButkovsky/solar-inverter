@@ -287,7 +287,10 @@ body.light #pw_tip { color: #1d2433; }
 .tabs button { padding: 7px 10px; margin: 0 4px 6px 0; font-size: 13px; }
 .tabs button.on { background: #2a5ce0; border-color: #2a5ce0; color: #fff; }
 .st_nav { display: flex; gap: 6px; align-items: center; margin: 2px 0 6px; }
-.st_nav button { flex: 0 0 auto; padding: 7px 12px; font-size: 15px; }
+.st_nav button { flex: 0 0 auto; padding: 7px 12px; font-size: 15px; margin: 0; }
+#st_cust { gap: 4px; }
+#st_cust button { padding: 7px 9px; }
+#st_cust input { padding: 7px 4px; font-size: 14px; }
 .st_nav #st_now { font-size: 13px; }
 .st_nav input { flex: 1 1 auto; min-width: 0; width: auto; padding: 7px 10px; font-size: 15px; color-scheme: dark; }
 body.light .st_nav input { color-scheme: light; }
@@ -601,15 +604,18 @@ body.light pre.rep { background: #f2f4f8; }
               onclick="stRange('year')"  id="sr_year">Год</button><button
               onclick="stRange('custom')" id="sr_custom">Период</button>
     </div>
-    <div class="st_nav">
-      <button onclick="stStep(-1)" id="st_prev" aria-label="Назад">‹</button>
+    <div class="st_nav" id="st_one">
+      <button onclick="stStep(-1)" class="st_prev" aria-label="Назад">‹</button>
       <input type="date" id="st_at" onchange="stPickDate()">
-      <button onclick="stStep(1)" id="st_next" aria-label="Вперёд">›</button>
+      <button onclick="stStep(1)" class="st_next" aria-label="Вперёд">›</button>
       <button onclick="stToday()" id="st_now">Сегодня</button>
     </div>
-    <div class="st_nav hidden" id="st_cust">
-      <span class="sub">с</span><input type="date" id="st_from" onchange="stPickRange()">
-      <span class="sub">по</span><input type="date" id="st_to" onchange="stPickRange()">
+    <div class="st_nav" id="st_cust" style="display:none">
+      <button onclick="stStep(-1)" class="st_prev" aria-label="Назад">‹</button>
+      <input type="date" id="st_from" onchange="stPickRange()">
+      <span class="sub">—</span>
+      <input type="date" id="st_to" onchange="stPickRange()">
+      <button onclick="stStep(1)" class="st_next" aria-label="Вперёд">›</button>
     </div>
     <div class="sub" id="st_per" style="margin:2px 0 8px"></div>
     <table class="kv">
@@ -2862,9 +2868,8 @@ function stShow() {
   show("st_notime", !s.valid);
   // Даты: выбор ограничен хранимым годом (по часам — неделя, см. nohours).
   var cu = stR === "custom";
-  show("st_cust", cu);
-  $("st_at").style.display = cu ? "none" : "";
-  $("st_now").style.display = cu ? "none" : "";
+  $("st_cust").style.display = cu ? "flex" : "none";
+  $("st_one").style.display = cu ? "none" : "flex";
   if (s.valid) {
     var lo = dayStr(s.min), hi = dayStr(s.today);
     var els = ["st_at", "st_from", "st_to"];
@@ -2874,8 +2879,9 @@ function stShow() {
       if (document.activeElement !== $("st_from")) $("st_from").value = dayStr(s.from);
       if (document.activeElement !== $("st_to")) $("st_to").value = dayStr(s.to);
     }
-    $("st_prev").disabled = s.from <= s.min;
-    $("st_next").disabled = s.to >= s.today;
+    var pv = document.querySelectorAll(".st_prev, .st_next");
+    for (var k = 0; k < pv.length; k++)
+      pv[k].disabled = /st_prev/.test(pv[k].className) ? s.from <= s.min : s.to >= s.today;
     $("st_now").disabled = !cu && s.at === s.today;
   }
   $("st_per").innerHTML = stPeriodText(s) +
