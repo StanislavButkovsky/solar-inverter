@@ -966,7 +966,7 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="auto">
     <div class="col c1"><div class="card">
-      <h2>Ночная зарядка по прогнозу <span id="au_achip" class="chip gray">—</span></h2>
+      <h2>Ночная зарядка по прогнозу</h2>
       <div class="sub" style="margin-bottom:10px">
         Если на завтра солнца мало, модуль ночью включает зарядку батареи от сети
         (CHP → PNG), а утром или когда батарея зарядится — возвращает PV. Батарея
@@ -984,13 +984,12 @@ body.light pre.rep { background: #f2f4f8; }
       <input id="au_to" inputmode="numeric">
       <label>Заряжать до, %</label>
       <input id="au_soc" inputmode="numeric">
-      <div class="sub" id="au_last" style="margin-top:8px"></div>
     </div></div>
   </div>
 
   <div class="row" data-tab="auto">
     <div class="col c1"><div class="card">
-      <h2>Облачность — переключение OPP днём <span id="cl_chip" class="chip gray">—</span></h2>
+      <h2>Облачность — переключение OPP днём</h2>
       <div class="sub" style="margin-bottom:10px">
         Если панели выдают меньше ожидаемого — ставит GRD (приоритет сети).
         Если выдают больше — ставит PBG (приоритет солнца). Сравнение идёт
@@ -1053,7 +1052,6 @@ body.light pre.rep { background: #f2f4f8; }
         По умолч. 18:00 — когда световой день заканчивается.
         От 0 до 23, по умолч. 18
       </div>
-      <div class="sub" id="cl_last" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -1071,7 +1069,6 @@ body.light pre.rep { background: #f2f4f8; }
       </div>
       <div id="sc_list"></div>
       <div style="margin-top:10px"><button onclick="scAdd()">Добавить правило</button></div>
-      <div class="sub" id="sc_msg" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -2540,10 +2537,6 @@ function autoRender(s) {
     $("au_st").innerHTML = t;
   }
   var a = x.auto;
-  if (!a.on) chip("au_achip", "gray", "выключена");
-  else if (a.active) chip("au_achip", "blue", "заряжает от сети");
-  else chip("au_achip", "green", "ждёт ночи");
-  $("au_last").innerHTML = a.msg ? "Последнее решение: " + a.msg + "." : "";
 
   // Облачность
   var cl = x.cloud;
@@ -2556,12 +2549,9 @@ function autoRender(s) {
     $("cl_from").value = cl.from;
     $("cl_to").value = cl.to;
   }
-  if (!cl.on) chip("cl_chip", "gray", "выключена");
-  else if (cl.active) chip("cl_chip", "blue", "GRD → сеть");
-  else chip("cl_chip", "green", "PBG → солнце");
-  $("cl_last").innerHTML = cl.msg ? "Последнее решение: " + cl.msg + "." : "";
 }
 // Единая кнопка «Сохранить всё» внизу страницы. Пароль — из единственного поля #pass.
+// Шлёт /api/auto (все параметры) и /api/sched (расписание) одним вызовом.
 function saveAll() {
   var msg = $("msg"), pass = $("pass").value;
   var q = [
@@ -2584,9 +2574,16 @@ function saveAll() {
     "pass=" + encodeURIComponent(pass)
   ].join("&");
   get("/api/auto?" + q, function (r) {
-    msg.innerHTML = !r.ok ? (r.error || "не вышло")
-      : "сохранено — если координаты сменились, прогноз будет запрошен заново";
-    if (r.ok) auFilled = false;
+    if (!r.ok) { msg.innerHTML = r.error || "не вышло"; return; }
+    // Шлём расписание
+    if (!scRules || !scRules.length) { msg.innerHTML = "сохранено"; return; }
+    var sched = scRules.map(function (x) {
+      return [x.on, x.d, x.h, x.m, x.w, x.c, x.k || 0, x.k ? x.o || 0 : 0].join(".");
+    }).join(";");
+    get("/api/sched?save=1&r=" + encodeURIComponent(sched) + "&pass=" + encodeURIComponent(pass), function (s) {
+      msg.innerHTML = s.ok ? "сохранено" : (s.error || "не вышло");
+      if (s.ok) scDirty = false;
+    }, function () { msg.innerHTML = "модуль не ответил, попробуйте ещё раз"; });
   }, function () { msg.innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }
 
