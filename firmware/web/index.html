@@ -762,7 +762,7 @@ body.light pre.rep { background: #f2f4f8; }
       <label>Имя сети (только 2,4 ГГц)</label>
       <input id="ssid" autocapitalize="off" autocorrect="off" autocomplete="off">
       <label>Пароль</label>
-      <input id="pass" type="password" autocomplete="off">
+      <input id="wifipass" type="password" autocomplete="off">
       <h2 style="margin-top:22px">Адрес модуля</h2>
       <div class="sub">
         Обычно адрес выдаёт роутер, и после переподключения он может смениться.
@@ -1910,14 +1910,14 @@ function pollNets() {
     $("nets").innerHTML = h + '</table>';
   }, function () { setTimeout(pollNets, 1000); });   // не достучались — пробуем снова
 }
-function pickNet(name) { $("ssid").value = name; $("pass").focus(); }
+function pickNet(name) { $("ssid").value = name; $("wifipass").focus(); }
 
 function saveCfg() {
   if (!$("ssid").value) { alert("Введите имя сети"); return; }
   if ($("ip_mode").value === "static" && !$("ip_ip").value.trim()) { alert("Введите адрес модуля или выберите «Автоматически»"); return; }
   var name = $("ssid").value;
   var u = "/api/config?ssid=" + encodeURIComponent(name) +
-          "&pass=" + encodeURIComponent($("pass").value) + ipQuery() + mp("mp_net");
+          "&pass=" + encodeURIComponent($("wifipass").value) + ipQuery() + mp("mp_net");
   // Отказ (нет пароля модуля) приходит ответом; успех — тоже, но модуль сразу
   // уходит в перезагрузку, и ответ может не дойти: молчание считаем успехом.
   get(u, function (r) {
