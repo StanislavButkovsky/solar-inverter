@@ -2570,6 +2570,7 @@ function autoRender(s) {
 function autoSave(c) {
   c = c || "";
   var msg = $("au_msg" + c);
+  if (!msg) msg = $("cl_msg");
   var fields = {
     lat: "au_lat", lon: "au_lon", kwp: "au_kwp", price: "au_price",
     below: "au_below", from: "au_from", to: "au_to", soc: "au_soc",
