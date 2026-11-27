@@ -2552,27 +2552,29 @@ function autoRender(s) {
 }
 // Единая кнопка «Сохранить всё» внизу страницы. Пароль — из единственного поля #pass.
 // Шлёт /api/auto (все параметры) и /api/sched (расписание) одним вызовом.
+// Отправляет только непустые поля — так можно менять любую подгруппу отдельно.
 function saveAll() {
   var msg = $("msg"), pass = $("pass").value;
-  var q = [
-    "lat=" + encodeURIComponent($("au_lat").value),
-    "lon=" + encodeURIComponent($("au_lon").value),
-    "kwp=" + encodeURIComponent($("au_kwp").value),
-    "price=" + encodeURIComponent($("au_price").value),
-    "below=" + encodeURIComponent($("au_below").value),
-    "from=" + encodeURIComponent($("au_from").value),
-    "to=" + encodeURIComponent($("au_to").value),
-    "soc=" + encodeURIComponent($("au_soc").value),
-    "clLow=" + encodeURIComponent($("cl_low").value),
-    "clHigh=" + encodeURIComponent($("cl_high").value),
-    "clSocMin=" + encodeURIComponent($("cl_socmin").value),
-    "clSocMax=" + encodeURIComponent($("cl_socmax").value),
-    "clFrom=" + encodeURIComponent($("cl_from").value),
-    "clTo=" + encodeURIComponent($("cl_to").value),
-    "on=" + $("au_on").value,
-    "clon=" + $("cl_on").value,
-    "pass=" + encodeURIComponent(pass)
-  ].join("&");
+  var pairs = [];
+  function add(k, v) { if (v !== undefined && v !== "") pairs.push(k + "=" + encodeURIComponent(v)); }
+  add("lat", $("au_lat").value);
+  add("lon", $("au_lon").value);
+  add("kwp", $("au_kwp").value);
+  add("price", $("au_price").value);
+  add("below", $("au_below").value);
+  add("from", $("au_from").value);
+  add("to", $("au_to").value);
+  add("soc", $("au_soc").value);
+  add("clLow", $("cl_low").value);
+  add("clHigh", $("cl_high").value);
+  add("clSocMin", $("cl_socmin").value);
+  add("clSocMax", $("cl_socmax").value);
+  add("clFrom", $("cl_from").value);
+  add("clTo", $("cl_to").value);
+  add("on", $("au_on").value);
+  add("clon", $("cl_on").value);
+  pairs.push("pass=" + encodeURIComponent(pass));
+  var q = pairs.join("&");
   get("/api/auto?" + q, function (r) {
     if (!r.ok) { msg.innerHTML = r.error || "не вышло"; return; }
     // Шлём расписание
