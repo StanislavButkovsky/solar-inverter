@@ -961,10 +961,6 @@ body.light pre.rep { background: #f2f4f8; }
         Нужна только первые три дня. Дальше модуль сам учится по тому, сколько
         панели дали на самом деле при такой погоде.
       </div>
-      <label>Пароль модуля</label>
-      <input id="au_passwx" type="password" autocomplete="current-password">
-      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('wx')">Сохранить</button></div>
-      <div class="sub" id="au_msgwx" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -989,10 +985,6 @@ body.light pre.rep { background: #f2f4f8; }
       <label>Заряжать до, %</label>
       <input id="au_soc" inputmode="numeric">
       <div class="sub" id="au_last" style="margin-top:8px"></div>
-      <label>Пароль модуля</label>
-      <input id="au_passch" type="password" autocomplete="current-password">
-      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('ch')">Сохранить</button></div>
-      <div class="sub" id="au_msgch" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -1062,10 +1054,6 @@ body.light pre.rep { background: #f2f4f8; }
         От 0 до 23, по умолч. 18
       </div>
       <div class="sub" id="cl_last" style="margin-top:8px"></div>
-      <label>Пароль модуля</label>
-      <input id="cl_pass" type="password" autocomplete="current-password">
-      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('cl')">Сохранить</button></div>
-      <div class="sub" id="cl_msg" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -1083,9 +1071,6 @@ body.light pre.rep { background: #f2f4f8; }
       </div>
       <div id="sc_list"></div>
       <div style="margin-top:10px"><button onclick="scAdd()">Добавить правило</button></div>
-      <label>Пароль модуля</label>
-      <input id="sc_pass" type="password" autocomplete="current-password">
-      <div style="margin-top:12px"><button class="wide accent" onclick="scSave()">Сохранить расписание</button></div>
       <div class="sub" id="sc_msg" style="margin-top:8px"></div>
     </div></div>
   </div>
@@ -1100,10 +1085,21 @@ body.light pre.rep { background: #f2f4f8; }
         киловатт-час, который не пришлось брать из сети. Видна в статистике и в
         вечерней сводке бота.
       </div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="auto">
+    <div class="col c1"><div class="card">
+      <h2>Сохранить настройки</h2>
+      <div class="sub" style="margin-bottom:10px">
+        Все параметры на этой странице: широта, долгота, мощность панелей, ночная
+        зарядка, облачность, расписание, экономия. Введите пароль — он нужен для
+        любых записей в модуль.
+      </div>
       <label>Пароль модуля</label>
-      <input id="au_pass" type="password" autocomplete="current-password">
-      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave()">Сохранить</button></div>
-      <div class="sub" id="au_msg" style="margin-top:8px"></div>
+      <input id="pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="saveAll()">Сохранить всё</button></div>
+      <div class="sub" id="msg" style="margin-top:8px"></div>
     </div></div>
   </div>
 
@@ -2372,7 +2368,7 @@ function dpSave() {
 
 function scSave() {
   var r = scRules.map(function (x) { return [x.on, x.d, x.h, x.m, x.w, x.c, x.k || 0, x.k ? x.o || 0 : 0].join("."); }).join(";");
-  get("/api/sched?save=1&r=" + encodeURIComponent(r) + "&pass=" + encodeURIComponent($("sc_pass").value), function (res) {
+  get("/api/sched?save=1&r=" + encodeURIComponent(r) + "&pass=" + encodeURIComponent($("pass").value), function (res) {
     if (res.ok) {
       scDirty = false;
       $("sc_msg").innerHTML = "сохранено — то, что по расписанию действует сейчас, модуль поставит в течение минуты (бот напишет, что именно)";
@@ -2565,28 +2561,31 @@ function autoRender(s) {
   else chip("cl_chip", "green", "PBG → солнце");
   $("cl_last").innerHTML = cl.msg ? "Последнее решение: " + cl.msg + "." : "";
 }
-// У каждой карточки «Авто» свой пароль и кнопка; уходят все поля вкладки
-// сразу — ручка одна (/api/auto).
-function autoSave(c) {
-  c = c || "";
-  var msg = $("au_msg" + c);
-  if (!msg) msg = $("cl_msg");
-  var fields = {
-    lat: "au_lat", lon: "au_lon", kwp: "au_kwp", price: "au_price",
-    below: "au_below", from: "au_from", to: "au_to", soc: "au_soc",
-    clLow: "cl_low", clHigh: "cl_high", clSocMin: "cl_socmin",
-    clSocMax: "cl_socmax", clFrom: "cl_from", clTo: "cl_to"
-  };
-  var parts = [];
-  for (var k in fields) {
-    var el = $(fields[k]);
-    parts.push(k + "=" + encodeURIComponent(el ? el.value : ""));
-  }
-  var q = parts.join("&") + "&on=" + $("au_on").value + "&clon=" + $("cl_on").value + "&pass=" + encodeURIComponent($("au_pass" + c).value);
+// Единая кнопка «Сохранить всё» внизу страницы. Пароль — из единственного поля #pass.
+function saveAll() {
+  var msg = $("msg"), pass = $("pass").value;
+  var q = [
+    "lat=" + encodeURIComponent($("au_lat").value),
+    "lon=" + encodeURIComponent($("au_lon").value),
+    "kwp=" + encodeURIComponent($("au_kwp").value),
+    "price=" + encodeURIComponent($("au_price").value),
+    "below=" + encodeURIComponent($("au_below").value),
+    "from=" + encodeURIComponent($("au_from").value),
+    "to=" + encodeURIComponent($("au_to").value),
+    "soc=" + encodeURIComponent($("au_soc").value),
+    "clLow=" + encodeURIComponent($("cl_low").value),
+    "clHigh=" + encodeURIComponent($("cl_high").value),
+    "clSocMin=" + encodeURIComponent($("cl_socmin").value),
+    "clSocMax=" + encodeURIComponent($("cl_socmax").value),
+    "clFrom=" + encodeURIComponent($("cl_from").value),
+    "clTo=" + encodeURIComponent($("cl_to").value),
+    "on=" + $("au_on").value,
+    "clon=" + $("cl_on").value,
+    "pass=" + encodeURIComponent(pass)
+  ].join("&");
   get("/api/auto?" + q, function (r) {
     msg.innerHTML = !r.ok ? (r.error || "не вышло")
-      : c === "ch" ? "сохранено — если сейчас ночное окно, решение о зарядке будет пересмотрено в течение 10 с"
-      : c === "wx" ? "сохранено — если координаты сменились, прогноз будет запрошен заново" : "сохранено";
+      : "сохранено — если координаты сменились, прогноз будет запрошен заново";
     if (r.ok) auFilled = false;
   }, function () { msg.innerHTML = "модуль не ответил, попробуйте ещё раз"; });
 }
