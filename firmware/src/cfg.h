@@ -30,6 +30,17 @@ struct Config {
     uint8_t  autoFrom, autoTo;  // ночное окно, часы местного времени
     uint8_t  autoSoc;     // зарядили до — возвращаем PV раньше конца окна, %
 
+    // Облачность — переключение OPP днём по факту выработки панелей.
+    // cloudOn=false — ничего не трогаем. Пороги — от ожидаемой выработки:
+    // pvW < expected × cloudLow → GRD, pvW > expected × cloudHigh → PBG.
+    bool     cloudOn;     // включена автоматика
+    float    cloudLow;    // «облачно»: pvW < expected × cloudLow (по умолч. 0.3)
+    float    cloudHigh;   // «ясно»: pvW > expected × cloudHigh (по умолч. 0.6)
+    uint8_t  cloudSocMin; // минимальный SOC для переключения на PBG (по умолч. 30%)
+    uint8_t  cloudSocMax; // максимальный SOC для переключения на GRD (по умолч. 90%)
+    uint8_t  cloudFrom;   // начало окна, часы местного (по умолч. 8)
+    uint8_t  cloudTo;     // конец окна, часы местного (по умолч. 18)
+
     // Свой счёт заряда (battsoc.cpp). Ёмкость 0 — выключен, процент берётся у BMS.
     float    bCapAh;      // ёмкость батареи, А·ч
     uint16_t bFullMv;     // 100 % — средняя ячейка, мВ

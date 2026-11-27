@@ -545,7 +545,8 @@ void webStart() {
                 else out = f;
             };
             float lat = c.lat, lon = c.lon, kwp = c.pvKwp, price = c.price, below = c.autoBelow, from = c.autoFrom,
-                  to = c.autoTo, soc = c.autoSoc;
+                  to = c.autoTo, soc = c.autoSoc, clLow = c.cloudLow, clHigh = c.cloudHigh;
+            float clSocMin = c.cloudSocMin, clSocMax = c.cloudSocMax, clFrom = c.cloudFrom, clTo = c.cloudTo;
             num("lat", -90, 90, lat, err, "широта");
             num("lon", -180, 180, lon, err, "долгота");
             num("kwp", 0, 100, kwp, err, "мощность панелей, кВт");
@@ -554,11 +555,21 @@ void webStart() {
             num("from", 0, 23, from, err, "начало ночи");
             num("to", 0, 23, to, err, "конец ночи");
             num("soc", 30, 100, soc, err, "заряд до");
+            num("clLow", 0.1f, 0.9f, clLow, err, "порог облачности");
+            num("clHigh", 0.1f, 0.9f, clHigh, err, "порог ясного неба");
+            num("clSocMin", 0, 100, clSocMin, err, "мин SOC");
+            num("clSocMax", 0, 100, clSocMax, err, "макс SOC");
+            num("clFrom", 0, 23, clFrom, err, "начало окна");
+            num("clTo", 0, 23, clTo, err, "конец окна");
             if (err.isEmpty()) {
                 bool moved = lat != c.lat || lon != c.lon;
                 c.lat = lat; c.lon = lon; c.pvKwp = kwp; c.price = price; c.autoBelow = below;
                 c.autoFrom = (uint8_t)from; c.autoTo = (uint8_t)to; c.autoSoc = (uint8_t)soc;
                 if (server.hasArg("on")) c.autoOn = server.arg("on") == "1";
+                c.cloudLow = clLow; c.cloudHigh = clHigh;
+                c.cloudSocMin = (uint8_t)clSocMin; c.cloudSocMax = (uint8_t)clSocMax;
+                c.cloudFrom = (uint8_t)clFrom; c.cloudTo = (uint8_t)clTo;
+                if (server.hasArg("clon")) c.cloudOn = server.arg("clon") == "1";
                 cfgSave();
                 if (moved) weatherRefresh();
                 weatherAutoReconsider();

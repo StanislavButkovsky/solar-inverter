@@ -46,6 +46,13 @@ static int8_t   s_want = -1;              // какой CHP добиваемся
 static uint32_t s_wantMs = 0;
 static String   s_msg;                    // последнее решение автоматики — на страницу
 
+// ------------------------------------------------------------------ облачность
+
+static bool     s_cloudActive = false;    // OPP = PBG поставили мы
+static int8_t   s_cloudWant = -1;         // какой OPP добиваемся; −1 — ничего
+static uint32_t s_cloudWantMs = 0;
+static String   s_cloudMsg;               // последнее решение — на страницу
+
 // ------------------------------------------------------------------ время
 
 static int32_t localDay() { return time(nullptr) > 1700000000 ? (int32_t)((time(nullptr) + TZ_SEC) / 86400) : -1; }
@@ -282,6 +289,102 @@ static void learn(int32_t day, int hour) {
     kSave();
 }
 
+// ------------------------------------------------------------------ облачность
+
+static void cloudAutoSave() {
+    Preferences p;
+    if (!p.begin("wx", false)) return;
+    p.putBool("cact", s_cloudActive);
+    p.end();
+}
+
+static bool inCloudWindow(int h) {
+    int f = cfg().cloudFrom, t = cfg().cloudTo;
+    if (f == t) return false;
+    return f > t ? (h >= f || h < t) : (h >= f && h < t);
+}
+
+// Дневная автоматика: если панели выдают мало — OPP = GRD (сеть), если много —
+// OPP = PBG (солнце). Сравнение — фактическая мощность панелей с ожидаемой
+// по радиации и коэффициенту обучения.
+//
+// Ожидаемая мощность = радиация в этот час × коэффициент × 1000.
+// Если pvW < expected × cloudLow → GRD.
+// Если pvW > expected × cloudHigh → PBG.
+// Гистерезис 30% между порогами предотвращает дребезг.
+
+static void cloudAutoStep(int32_t day, int hour) {
+    if (!cfg().cloudOn) {
+        if (s_cloudActive) {
+            s_cloudActive = false; cloudAutoSave();
+            s_cloudMsg = "облачность выключена";
+        }
+        return;
+    }
+
+    if (!inCloudWindow(hour)) {
+        if (s_cloudActive) {
+            s_cloudActive = false; cloudAutoSave();
+            s_cloudMsg = "окно облачности закончилось";
+        }
+        return;
+    }
+
+    InvState v = invSnapshot();
+    if (!v.fresh) return;
+
+    // Радиация в этот час по прогнозу
+    int rad = weatherNowRad();
+    if (rad <= 0) {
+        if (s_cloudActive && v.prioOut != 0) {
+            // Радиация не определена — ставим GRD
+            if (millis() - s_cloudWantMs > 60000) {
+                s_cloudWantMs = millis();
+                invSetSetting(0, 0); // GRD
+            }
+        }
+        return;
+    }
+
+    // Ожидаемая мощность панелей: радиация (Вт/м²) × коэффициент
+    float k = kNow(nullptr);
+    if (k <= 0) return; // нет коэффициента — не можем оценить
+    float expected = rad * k; // Вт
+
+    float pvW = v.pvW;
+    if (pvW <= 0) {
+        // Панели не выдают ничего — ставим GRD
+        if (s_cloudActive && v.prioOut != 0) {
+            if (millis() - s_cloudWantMs > 60000) {
+                s_cloudWantMs = millis();
+                invSetSetting(0, 0); // GRD
+            }
+        }
+        return;
+    }
+
+    float ratio = pvW / expected;
+    uint8_t curOpp = v.prioOut;
+
+    if (ratio < cfg().cloudLow) {
+        // Облачно — ставим GRD
+        if (curOpp != 0) {
+            if (millis() - s_cloudWantMs > 60000) {
+                s_cloudWantMs = millis();
+                invSetSetting(0, 0); // GRD
+            }
+        }
+    } else if (ratio >= cfg().cloudHigh && curOpp != 2) {
+        // Ясно — ставим PBG
+        if (s_cloudActive && millis() - s_cloudWantMs > 60000) {
+            s_cloudWantMs = millis();
+            invSetSetting(0, 2); // PBG
+        }
+    }
+}
+
+bool weatherCloudActive() { return s_cloudActive; }
+
 // ------------------------------------------------------------------ автоматика
 
 static void autoSave() {
@@ -388,6 +491,7 @@ void weatherLoop() {
     if (pv0 >= 0) statsSetPvForecast(pv0 * 1000);
     learn(day, hour);
     autoStep(day, hour);
+    cloudAutoStep(day, hour);
 }
 
 void weatherStart() {
@@ -437,8 +541,30 @@ String weatherJson() {
     j += ",\"k\":" + String(k, 2) + ",\"kSrc\":\"" + esc(src) + "\",\"kN\":" + String(s_kn);
     j += ",\"auto\":{\"on\":" + String(c.autoOn ? "true" : "false") + ",\"below\":" + String(c.autoBelow, 1) +
          ",\"from\":" + String(c.autoFrom) + ",\"to\":" + String(c.autoTo) + ",\"soc\":" + String(c.autoSoc) +
-         ",\"active\":" + String(s_active ? "true" : "false") + ",\"msg\":\"" + esc(s_msg) + "\"}}";
+         ",\"active\":" + String(s_active ? "true" : "false") + ",\"msg\":\"" + esc(s_msg) + "\"}";
+    j += ",\"cloud\":{\"on\":" + String(c.cloudOn ? "true" : "false") +
+         ",\"low\":" + String(c.cloudLow, 2) +
+         ",\"high\":" + String(c.cloudHigh, 2) +
+         ",\"socMin\":" + String(c.cloudSocMin) +
+         ",\"socMax\":" + String(c.cloudSocMax) +
+         ",\"from\":" + String(c.cloudFrom) +
+         ",\"to\":" + String(c.cloudTo) +
+         ",\"active\":" + String(s_cloudActive ? "true" : "false") +
+         ",\"msg\":\"" + esc(s_cloudMsg) + "\"}}";
     return j;
+}
+
+String cloudJson() {
+    const Config& c = cfg();
+    return "{\"on\":" + String(c.cloudOn ? "true" : "false") +
+           ",\"low\":" + String(c.cloudLow, 2) +
+           ",\"high\":" + String(c.cloudHigh, 2) +
+           ",\"socMin\":" + String(c.cloudSocMin) +
+           ",\"socMax\":" + String(c.cloudSocMax) +
+           ",\"from\":" + String(c.cloudFrom) +
+           ",\"to\":" + String(c.cloudTo) +
+           ",\"active\":" + String(s_cloudActive ? "true" : "false") +
+           ",\"msg\":\"" + esc(s_cloudMsg) + "\"}";
 }
 
 String weatherText() {

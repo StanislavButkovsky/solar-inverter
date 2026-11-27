@@ -998,6 +998,39 @@ body.light pre.rep { background: #f2f4f8; }
 
   <div class="row" data-tab="auto">
     <div class="col c1"><div class="card">
+      <h2>Облачность — переключение OPP днём <span id="cl_chip" class="chip gray">—</span></h2>
+      <div class="sub" style="margin-bottom:10px">
+        Если панели выдают меньше ожидаемого — ставит GRD (приоритет сети).
+        Если выдают больше — ставит PBG (приоритет солнца). Сравнение идёт
+        с прогнозом радиации, умноженным на коэффициент обучения.
+        Трогает только OPP: приоритет выхода, не зарядку.
+      </div>
+      <select id="cl_on">
+        <option value="0">Выключена</option>
+        <option value="1">Включена</option>
+      </select>
+      <label>«Облачно» — меньше, от ожидаемого</label>
+      <input id="cl_low" inputmode="decimal" placeholder="0.3">
+      <label>«Ясно» — больше, от ожидаемого</label>
+      <input id="cl_high" inputmode="decimal" placeholder="0.6">
+      <label>Мин SOC, %</label>
+      <input id="cl_socmin" inputmode="numeric">
+      <label>Макс SOC, %</label>
+      <input id="cl_socmax" inputmode="numeric">
+      <label>Окно — с, часов</label>
+      <input id="cl_from" inputmode="numeric">
+      <label>до, часов</label>
+      <input id="cl_to" inputmode="numeric">
+      <div class="sub" id="cl_last" style="margin-top:8px"></div>
+      <label>Пароль модуля</label>
+      <input id="cl_pass" type="password" autocomplete="current-password">
+      <div style="margin-top:12px"><button class="wide accent" onclick="autoSave('cl')">Сохранить</button></div>
+      <div class="sub" id="cl_msg" style="margin-top:8px"></div>
+    </div></div>
+  </div>
+
+  <div class="row" data-tab="auto">
+    <div class="col c1"><div class="card">
       <h2>Расписание режимов <span id="sc_chip" class="chip gray">—</span></h2>
       <div class="sub" style="margin-bottom:8px">
         Каждое правило — одно переключение: в эти дни, в это время поставить режим.
@@ -2475,14 +2508,40 @@ function autoRender(s) {
   else if (a.active) chip("au_achip", "blue", "заряжает от сети");
   else chip("au_achip", "green", "ждёт ночи");
   $("au_last").innerHTML = a.msg ? "Последнее решение: " + a.msg + "." : "";
+
+  // Облачность
+  var cl = x.cloud;
+  if (!auFilled) {
+    $("cl_on").value = cl.on ? "1" : "0";
+    $("cl_low").value = num1(cl.low);
+    $("cl_high").value = num1(cl.high);
+    $("cl_socmin").value = cl.socMin;
+    $("cl_socmax").value = cl.socMax;
+    $("cl_from").value = cl.from;
+    $("cl_to").value = cl.to;
+  }
+  if (!cl.on) chip("cl_chip", "gray", "выключена");
+  else if (cl.active) chip("cl_chip", "blue", "GRD → сеть");
+  else chip("cl_chip", "green", "PBG → солнце");
+  $("cl_last").innerHTML = cl.msg ? "Последнее решение: " + cl.msg + "." : "";
 }
 // У каждой карточки «Авто» свой пароль и кнопка; уходят все поля вкладки
 // сразу — ручка одна (/api/auto).
 function autoSave(c) {
   c = c || "";
-  var msg = $("au_msg" + c), q = ["lat", "lon", "kwp", "price", "below", "from", "to", "soc"].map(function (k) {
-    return k + "=" + encodeURIComponent($("au_" + k).value);
-  }).join("&") + "&on=" + $("au_on").value + "&pass=" + encodeURIComponent($("au_pass" + c).value);
+  var msg = $("au_msg" + c);
+  var fields = {
+    lat: "au_lat", lon: "au_lon", kwp: "au_kwp", price: "au_price",
+    below: "au_below", from: "au_from", to: "au_to", soc: "au_soc",
+    clLow: "cl_low", clHigh: "cl_high", clSocMin: "cl_socmin",
+    clSocMax: "cl_socmax", clFrom: "cl_from", clTo: "cl_to"
+  };
+  var parts = [];
+  for (var k in fields) {
+    var el = $(fields[k]);
+    parts.push(k + "=" + encodeURIComponent(el ? el.value : ""));
+  }
+  var q = parts.join("&") + "&on=" + $("au_on").value + "&clon=" + $("cl_on").value + "&pass=" + encodeURIComponent($("au_pass" + c).value);
   get("/api/auto?" + q, function (r) {
     msg.innerHTML = !r.ok ? (r.error || "не вышло")
       : c === "ch" ? "сохранено — если сейчас ночное окно, решение о зарядке будет пересмотрено в течение 10 с"

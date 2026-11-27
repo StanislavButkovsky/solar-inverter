@@ -30,6 +30,8 @@ float  weatherPvKwh(int8_t day); // прогноз выработки: 0 — с�
 String weatherJson();            // для /api/state
 String weatherText();            // для бота: прогноз и автоматика
 bool   weatherChargeActive();    // ночная зарядка сейчас держит CHP = PNG
+bool   weatherCloudActive();     // облачность сейчас держит OPP = PBG
+String cloudJson();              // для страницы: настройки и текущее состояние
 void   weatherAutoReconsider();  // настройки ночной зарядки сменились — решить заново
 
 void   tlsLock();

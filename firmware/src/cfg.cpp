@@ -32,6 +32,13 @@ void cfgInit() {
     g_cfg.autoFrom  = prefs.getUChar("autofrom", 23);
     g_cfg.autoTo    = prefs.getUChar("autoto", 7);
     g_cfg.autoSoc   = prefs.getUChar("autosoc", 95);
+    g_cfg.cloudOn   = prefs.getBool("clodon", false);
+    g_cfg.cloudLow  = prefs.getFloat("cloudlow", 0.3f);
+    g_cfg.cloudHigh = prefs.getFloat("cloudhigh", 0.6f);
+    g_cfg.cloudSocMin = prefs.getUChar("clsocmin", 30);
+    g_cfg.cloudSocMax = prefs.getUChar("clsocmax", 90);
+    g_cfg.cloudFrom = prefs.getUChar("clfrom", 8);
+    g_cfg.cloudTo   = prefs.getUChar("clto", 18);
     g_cfg.bCapAh    = prefs.getFloat("bcap", 0);
     g_cfg.bFullMv   = prefs.getUShort("bfull", 4050);
     g_cfg.bEmptyMv  = prefs.getUShort("bempty", 3400);
@@ -67,6 +74,13 @@ void cfgSave() {
     prefs.putUChar("autofrom", g_cfg.autoFrom);
     prefs.putUChar("autoto", g_cfg.autoTo);
     prefs.putUChar("autosoc", g_cfg.autoSoc);
+    prefs.putBool("clodon",   g_cfg.cloudOn);
+    prefs.putFloat("cloudlow",  g_cfg.cloudLow);
+    prefs.putFloat("cloudhigh", g_cfg.cloudHigh);
+    prefs.putUChar("clsocmin", g_cfg.cloudSocMin);
+    prefs.putUChar("clsocmax", g_cfg.cloudSocMax);
+    prefs.putUChar("clfrom", g_cfg.cloudFrom);
+    prefs.putUChar("clto",   g_cfg.cloudTo);
     prefs.putFloat("bcap", g_cfg.bCapAh);
     prefs.putUShort("bfull", g_cfg.bFullMv);
     prefs.putUShort("bempty", g_cfg.bEmptyMv);
@@ -78,5 +92,7 @@ void cfgFactoryReset() {
     g_cfg.pollMs = 300;
     g_cfg.tgSocLow = 20;
     g_cfg.autoBelow = 5; g_cfg.autoFrom = 23; g_cfg.autoTo = 7; g_cfg.autoSoc = 95;
+    g_cfg.cloudLow = 0.3f; g_cfg.cloudHigh = 0.6f; g_cfg.cloudSocMin = 30;
+    g_cfg.cloudSocMax = 90; g_cfg.cloudFrom = 8; g_cfg.cloudTo = 18;
     g_cfg.bFullMv = 4050; g_cfg.bEmptyMv = 3400;
 }
